@@ -205,6 +205,51 @@ CHAINS: dict[str, dict] = {
 EVM_METHODS = [m for m, c in CHAINS.items() if c.get("scanner") == "evm"]
 
 
+# ---------------------------------------------------------------------------
+#  Fake-token protection — the ALLOWLIST of real stablecoin token contracts.
+#
+#  The gateway only ever scans (watcher getLogs), credits, or sweeps the EXACT token
+#  contracts listed in the CHAINS registry above. A scammer can deploy a token they
+#  NAME "USDT" / "USDC" / "BSC-USD" at some other contract and send it to a gateway
+#  address, but because every scan and every balance/sweep call is filtered by these
+#  contract addresses, such a fake token is never seen, never credited, and never swept.
+#  These derived structures make that guarantee explicit, testable, and reusable so any
+#  code path that ever takes a contract from outside input can reject non-real tokens.
+#  The registry IS the single source of truth: add a real coin there and it's covered
+#  everywhere; anything not there is treated as fake.
+# ---------------------------------------------------------------------------
+REAL_STABLECOIN_CONTRACTS: frozenset = frozenset(
+    contract.lower()
+    for chain in CHAINS.values()
+    if chain.get("scanner") == "evm"
+    for contract in chain.get("tokens", {}).values()
+)
+
+# contract (lowercased) -> {symbol, method, chain_id, decimals} for reverse lookup.
+TOKEN_BY_CONTRACT: dict = {
+    contract.lower(): {
+        "symbol": sym,
+        "method": method,
+        "chain_id": chain.get("chain_id"),
+        "decimals": chain.get("decimals"),
+    }
+    for method, chain in CHAINS.items()
+    if chain.get("scanner") == "evm"
+    for sym, contract in chain.get("tokens", {}).items()
+}
+
+
+def is_real_stablecoin(contract: str) -> bool:
+    """True if `contract` is a real USDT/USDC (or supported bridged variant) on any chain
+    the gateway watches. Anything else is an unknown/scam token — never to be credited."""
+    return str(contract or "").strip().lower() in REAL_STABLECOIN_CONTRACTS
+
+
+def stablecoins_for_chain(method: str) -> dict:
+    """{SYMBOL: contract} of the real stablecoins on one chain (empty for TON/unknown)."""
+    return dict(CHAINS.get(method, {}).get("tokens", {}))
+
+
 def is_evm(method: str) -> bool:
     return CHAINS.get(method, {}).get("scanner") == "evm"
 

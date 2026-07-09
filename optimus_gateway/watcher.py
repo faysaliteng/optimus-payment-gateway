@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 
 from . import db, evm, ton
-from .chains import CHAINS, cents_divisor, to_cents
+from .chains import CHAINS, cents_divisor, to_cents, is_real_stablecoin
 from .config import config
 
 log = logging.getLogger("optimus_gateway.watcher")
@@ -39,7 +39,11 @@ def _watched_tokens(method: str) -> dict:
         for k, v in cfg["tokens"].items():
             if k != "USDT":
                 toks[k] = v
-    return toks
+    # Fake-token guard (defense-in-depth): only ever scan/credit KNOWN-REAL stablecoin
+    # contracts. getLogs is already filtered by these exact contracts, so a scam token
+    # sent to a gateway address is structurally never scanned — this makes it explicit
+    # and immune to a stray bad entry ever reaching the registry.
+    return {sym: c for sym, c in toks.items() if is_real_stablecoin(c)}
 
 
 def scan_evm(method: str, on_paid=None) -> dict:

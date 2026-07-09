@@ -20,7 +20,7 @@ import logging
 import time
 
 from . import db, evm, hdwallet
-from .chains import CHAINS, EVM_METHODS, cents_divisor, chain_id, native_coin
+from .chains import CHAINS, EVM_METHODS, cents_divisor, chain_id, native_coin, is_real_stablecoin
 from .config import config
 
 log = logging.getLogger("optimus_gateway.sweeper")
@@ -78,6 +78,9 @@ def _token_balances(eps, method: str, addr: str) -> list[tuple]:
     out = []
     for sym, contract in CHAINS[method]["tokens"].items():
         if sym != "USDT" and not config.accept_usdc():
+            continue
+        # Only ever touch known-real stablecoin contracts (fake-token guard).
+        if not is_real_stablecoin(contract):
             continue
         b = evm.token_balance(eps, contract, addr)
         if b > 0:

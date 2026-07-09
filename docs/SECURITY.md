@@ -195,6 +195,30 @@ file permissions tight, run the process as an unprivileged user, and back up the
 DB (§4). In dedicated-wallet mode, the value at risk is still only the hot-wallet
 float, protected by the `0600` key file that is separate from the DB.
 
+### 3.9 A fake / scam token is sent to a gateway address
+
+**Threat:** a scammer deploys a token they **name** "USDT" / "USDC" / "BSC-USD" at a
+contract of their own and sends it to one of your gateway addresses, hoping it is
+mistaken for a real stablecoin payment and credited.
+
+**Mitigations:**
+- **Contract allowlist, not names.** The gateway only ever scans, credits, and sweeps
+  the **exact real token contracts** in the `chains.py` `CHAINS` registry — surfaced as
+  `REAL_STABLECOIN_CONTRACTS` and `is_real_stablecoin()`. Every `eth_getLogs` scan is
+  filtered **by contract address** (`evm.get_logs_transfers`, `address: contract`) and
+  re-verified in-process, so a token at any *other* contract is **never seen**: its
+  transfers are not scanned, not credited, and not swept. The token's *name/symbol* is
+  irrelevant — only the on-chain contract address decides whether it is money.
+- **Defense-in-depth guard.** `watcher._watched_tokens` and `sweeper._token_balances`
+  both pass every contract through `is_real_stablecoin()`, so even a stray bad entry in
+  the registry could not cause a fake token to be watched or moved.
+  `tests/test_fake_token.py` pins this: the full per-chain allowlist is verified, real
+  contracts are accepted (case-insensitively), and real-world scam contracts observed in
+  production (fake "USDT"/"BSC-USD") are rejected.
+- **One place to add a coin.** To accept a new real stablecoin, add its verified
+  contract to the registry — it is then covered everywhere at once. Anything not in the
+  registry is, by construction, treated as a fake token and ignored.
+
 ---
 
 ## 4. Hardening checklist

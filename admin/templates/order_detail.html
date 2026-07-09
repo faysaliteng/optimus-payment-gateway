@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Order {{ trade_id }}{% endblock %}
+
+{% block content %}
+<div class="page-head row">
+  <div>
+    <h1>Order</h1>
+    <p class="muted mono">{{ trade_id }}</p>
+  </div>
+  <a class="link" href="{{ url_for('orders') }}">← Back to orders</a>
+</div>
+
+{% if not order %}
+  <section class="card">
+    <div class="banner warn">No order found for trade id <span class="mono">{{ trade_id }}</span>.</div>
+  </section>
+{% else %}
+<div class="cols">
+  <section class="card">
+    <div class="card-head">
+      <h2>Summary</h2>
+      <span class="pill {{ order.status }}">{{ order.status }}</span>
+    </div>
+    <table class="kv">
+      <tbody>
+        <tr><th>Network</th><td>{{ order.network }}</td></tr>
+        <tr><th>Method</th><td class="mono">{{ order.method }}</td></tr>
+        <tr><th>Token</th><td>{{ order.token }}</td></tr>
+        <tr><th>Pay amount</th><td class="num">{{ order.pay_amount }} USDT
+            <span class="muted">({{ order.pay_amount_cents | usd }} {{ quote_currency }})</span></td></tr>
+        <tr><th>Received</th><td class="num">{{ order.received_cents | usd }} {{ quote_currency }}</td></tr>
+        <tr><th>Quoted</th><td class="num">{{ order.quote_amount }} {{ order.quote_currency }}</td></tr>
+        {% if order.merchant_order_id %}
+        <tr><th>Merchant order</th><td class="mono">{{ order.merchant_order_id }}</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Payment</h2></div>
+    <table class="kv">
+      <tbody>
+        <tr><th>Pay address</th><td class="mono break">{{ order.pay_address or '—' }}</td></tr>
+        {% if order.pay_memo %}
+        <tr><th>Memo / comment</th><td class="mono break">{{ order.pay_memo }}</td></tr>
+        {% endif %}
+        <tr><th>Created</th><td>{{ order.created_at or '—' }}</td></tr>
+        <tr><th>Expires</th><td>{{ order.expires_at or '—' }}</td></tr>
+        <tr><th>Paid at</th><td>{{ order.paid_at or '—' }}</td></tr>
+        <tr><th>Checkout</th><td><a class="link break" href="{{ order.checkout_url }}" target="_blank" rel="noopener">{{ order.checkout_url }}</a></td></tr>
+        {% if order.explorer %}
+        <tr><th>Explorer</th><td class="mono break">{{ order.explorer }}</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </section>
+</div>
+{% endif %}
+{% endblock %}

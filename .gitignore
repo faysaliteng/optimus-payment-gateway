@@ -1,0 +1,20 @@
+# secrets — NEVER commit
+.env
+private/
+*.xprv
+*.key
+*.mnemonic
+backup_mnemonic.txt
+
+# database
+*.db
+*.db-wal
+*.db-shm
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/

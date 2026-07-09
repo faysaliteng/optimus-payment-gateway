@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Orders{% endblock %}
+
+{% block content %}
+<div class="page-head row">
+  <div>
+    <h1>Orders</h1>
+    <p class="muted">{{ orders | length }} order(s){% if status %} · filtered by “{{ status }}”{% endif %}</p>
+  </div>
+  <form class="filter" method="get" action="{{ url_for('orders') }}">
+    <label for="status" class="muted small">Status</label>
+    <select id="status" name="status" onchange="this.form.submit()">
+      <option value="" {{ 'selected' if not status }}>All</option>
+      {% for s in statuses %}
+        <option value="{{ s }}" {{ 'selected' if status == s }}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <noscript><button class="btn" type="submit">Filter</button></noscript>
+  </form>
+</div>
+
+<section class="card">
+  {% if orders %}
+  <div class="table-scroll">
+    <table class="grid">
+      <thead>
+        <tr>
+          <th>Trade ID</th>
+          <th>Method</th>
+          <th class="num">Amount</th>
+          <th class="num">Received</th>
+          <th>Status</th>
+          <th>Pay address</th>
+          <th>Created</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for o in orders %}
+        <tr onclick="location.href='{{ url_for('order_detail', trade_id=o.trade_id) }}'">
+          <td class="mono">{{ o.trade_id | truncaddr(12, 6) }}</td>
+          <td><span title="{{ o.method | method_label }}">{{ o.method | method_short }}</span></td>
+          <td class="num">{{ o.expected_cents | usd }}</td>
+          <td class="num {{ 'text-low' if (o.received_cents or 0) < (o.expected_cents or 0) and o.status != 'expired' }}">
+            {{ o.received_cents | usd }}
+          </td>
+          <td><span class="pill {{ o.status }}">{{ o.status }}</span></td>
+          <td class="mono" title="{{ o.pay_address }}">{{ o.pay_address | truncaddr }}</td>
+          <td class="muted small">{{ o.created_at }}</td>
+          <td class="num"><a class="link" href="{{ url_for('order_detail', trade_id=o.trade_id) }}">view →</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    <div class="empty muted">No orders match this filter.</div>
+  {% endif %}
+</section>
+{% endblock %}

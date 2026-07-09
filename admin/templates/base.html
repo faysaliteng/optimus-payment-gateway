@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{% block title %}Admin{% endblock %} · Optimus Gateway</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <a class="brand" href="{{ url_for('dashboard') }}">
+        <span class="brand-mark">⚡</span>
+        <span class="brand-name">Optimus Gateway</span>
+        <span class="brand-tag">admin</span>
+      </a>
+      <nav class="nav">
+        <a class="nav-link {{ 'active' if active == 'dashboard' }}"
+           href="{{ url_for('dashboard') }}">Dashboard</a>
+        <a class="nav-link {{ 'active' if active == 'orders' }}"
+           href="{{ url_for('orders') }}">Orders</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap main">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer wrap">
+    <span>Optimus Payment Gateway · v{{ version }}</span>
+    <span class="muted">Self-hosted · non-custodial · read-only console</span>
+  </footer>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

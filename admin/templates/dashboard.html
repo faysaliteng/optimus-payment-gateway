@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Dashboard</h1>
+  <p class="muted">Live view of orders, gas tanks and recovery.</p>
+</div>
+
+<!-- KPI cards ------------------------------------------------------------- -->
+<section class="kpi-grid">
+  <div class="card kpi">
+    <div class="kpi-label">Total received</div>
+    <div class="kpi-value">{{ counts.total_received_cents | usd }}
+      <span class="kpi-unit">{{ quote_currency }}</span></div>
+    <div class="kpi-sub muted">across {{ counts.paid }} paid order(s)</div>
+  </div>
+  <div class="card kpi">
+    <div class="kpi-label">Pending</div>
+    <div class="kpi-value accent-amber">{{ counts.pending }}</div>
+    <div class="kpi-sub muted">{{ counts.pending_value_cents | usd }} {{ quote_currency }} awaiting</div>
+  </div>
+  <div class="card kpi">
+    <div class="kpi-label">Paid</div>
+    <div class="kpi-value accent-green">{{ counts.paid }}</div>
+    <div class="kpi-sub muted">settled orders</div>
+  </div>
+  <div class="card kpi">
+    <div class="kpi-label">Expired</div>
+    <div class="kpi-value accent-dim">{{ counts.expired }}</div>
+    <div class="kpi-sub muted">{{ counts.total }} orders total</div>
+  </div>
+</section>
+
+<div class="cols">
+  <!-- Gas tanks ----------------------------------------------------------- -->
+  <section class="card">
+    <div class="card-head">
+      <h2>Gas tanks</h2>
+      <span class="muted small">low &lt; {{ '%.4f'|format(gas_threshold) }} native</span>
+    </div>
+
+    {% if gas_error %}
+      <div class="banner warn">Could not read balances: {{ gas_error }}</div>
+    {% endif %}
+
+    {% if tanks %}
+      <div class="tank-list">
+        {% for t in tanks %}
+        <div class="tank {{ 'is-low' if t.low }}">
+          <div class="tank-top">
+            <span class="tank-name">{{ t.label }}</span>
+            <span class="tank-bal {{ 'text-low' if t.low }}">
+              {{ '%.6f'|format(t.native) }} {{ t.symbol }}
+            </span>
+          </div>
+          {% if t.configured %}
+            <div class="tank-addr mono" title="{{ t.address }}">{{ t.address | truncaddr(12, 10) }}</div>
+            {% if t.low %}
+              <div class="tank-hint">⚠ Low — top up {{ t.symbol }} on {{ t.label }} to keep sweeps flowing.</div>
+            {% endif %}
+          {% else %}
+            <div class="tank-hint muted">Watch-only mode — no sweep key configured (deposits still credit).</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty muted">No EVM gas tanks to show.</div>
+    {% endif %}
+
+    <!-- Recover ----------------------------------------------------------- -->
+    <div class="recover">
+      <button id="recover-btn" class="btn btn-primary" type="button">
+        Scan &amp; recover wrong-network funds
+      </button>
+      <span id="recover-status" class="muted small"></span>
+      <pre id="recover-out" class="json-out" hidden></pre>
+    </div>
+  </section>
+
+  <!-- Config summary ------------------------------------------------------ -->
+  <section class="card">
+    <div class="card-head"><h2>Configuration</h2></div>
+
+    <div class="chips">
+      <span class="chip-label">Enabled methods</span>
+      {% for m in enabled_methods %}
+        <span class="chip">{{ m | method_short }}</span>
+      {% else %}
+        <span class="muted">none</span>
+      {% endfor %}
+    </div>
+
+    <table class="kv">
+      <tbody>
+        {% for k, v in summary.items() %}
+        <tr>
+          <th>{{ k.replace('_', ' ') }}</th>
+          <td>
+            {% if v is boolean %}
+              <span class="dot {{ 'on' if v else 'off' }}"></span>{{ 'yes' if v else 'no' }}
+            {% elif v is iterable and v is not string %}
+              {{ v | join(', ') }}
+            {% else %}
+              {{ v }}
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="muted small">Non-secret snapshot. Keys, xpub and secrets are never shown here.</p>
+  </section>
+</div>
+
+<!-- Recent orders --------------------------------------------------------- -->
+<section class="card">
+  <div class="card-head">
+    <h2>Recent orders</h2>
+    <a class="link" href="{{ url_for('orders') }}">View all →</a>
+  </div>
+  {% if recent %}
+  <div class="table-scroll">
+    <table class="grid">
+      <thead>
+        <tr><th>Trade ID</th><th>Method</th><th class="num">Amount</th>
+            <th class="num">Received</th><th>Status</th><th>Created</th></tr>
+      </thead>
+      <tbody>
+        {% for o in recent %}
+        <tr onclick="location.href='{{ url_for('order_detail', trade_id=o.trade_id) }}'">
+          <td class="mono">{{ o.trade_id | truncaddr(10, 6) }}</td>
+          <td>{{ o.method | method_short }}</td>
+          <td class="num">{{ o.expected_cents | usd }}</td>
+          <td class="num">{{ o.received_cents | usd }}</td>
+          <td><span class="pill {{ o.status }}">{{ o.status }}</span></td>
+          <td class="muted small">{{ o.created_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    <div class="empty muted">No orders yet.</div>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const btn = document.getElementById('recover-btn');
+  const status = document.getElementById('recover-status');
+  const out = document.getElementById('recover-out');
+
+  btn.addEventListener('click', async function () {
+    btn.disabled = true;
+    status.textContent = 'Scanning chains… this can take a minute.';
+    out.hidden = true;
+    try {
+      const res = await fetch('{{ url_for("recover") }}', {
+        method: 'POST',
+        headers: { 'Accept': 'application/json' },
+        credentials: 'same-origin'
+      });
+      const data = await res.json();
+      out.hidden = false;
+      out.textContent = JSON.stringify(data, null, 2);
+      if (res.ok && data.ok) {
+        const r = data.result || {};
+        const credited = (r.credited || []).length;
+        const swept = (r.swept || []).length;
+        status.textContent = 'Done: ' + r.status + ' · credited ' + credited +
+                             ' · swept ' + swept + ' · scanned ' + (r.scanned || 0);
+      } else {
+        status.textContent = 'Error: ' + (data.error || res.status);
+      }
+    } catch (e) {
+      status.textContent = 'Request failed: ' + e;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+})();
+</script>
+{% endblock %}

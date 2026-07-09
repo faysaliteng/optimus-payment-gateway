@@ -135,17 +135,26 @@ key, no signup. The watcher/sweeper try them in order and move on if one fails.
 | Method | Default RPCs (in order) |
 |---|---|
 | `usdt_bep20` | `https://bnb.api.onfinality.io/public`<br>`https://bsc.rpc.blxrbdn.com`<br>`https://bsc-dataseed.binance.org` |
-| `usdt_polygon` | `https://polygon-bor-rpc.publicnode.com`<br>`https://polygon.drpc.org`<br>`https://polygon-rpc.com`<br>`https://rpc.ankr.com/polygon` |
+| `usdt_polygon` | `https://polygon-bor-rpc.publicnode.com`<br>`https://polygon.drpc.org`<br>`https://polygon-bor.publicnode.com`<br>`https://1rpc.io/matic` |
 | `usdt_arbitrum` | `https://arbitrum-one-rpc.publicnode.com`<br>`https://arb1.arbitrum.io/rpc`<br>`https://arbitrum.drpc.org` |
 | `usdt_optimism` | `https://optimism-rpc.publicnode.com`<br>`https://mainnet.optimism.io`<br>`https://optimism.drpc.org` |
 | `usdt_base` | `https://base-rpc.publicnode.com`<br>`https://mainnet.base.org`<br>`https://base.drpc.org` |
-| `usdt_erc20` | `https://ethereum-rpc.publicnode.com`<br>`https://eth.drpc.org`<br>`https://rpc.ankr.com/eth`<br>`https://cloudflare-eth.com` |
+| `usdt_erc20` | `https://ethereum-rpc.publicnode.com`<br>`https://eth.drpc.org`<br>`https://rpc.mevblocker.io`<br>`https://1rpc.io/eth` |
 | `usdt_avalanche` | `https://avalanche-c-chain-rpc.publicnode.com`<br>`https://api.avax.network/ext/bc/C/rpc`<br>`https://avalanche.drpc.org` |
 | `usdt_ton` | toncenter v3 (`https://toncenter.com/api/v3`); optional key via `OPG_TONCENTER_API_KEY` |
 
 > **Why not the plain BSC dataseed for everything?** Most public BSC dataseed nodes
 > **block `eth_getLogs`**, which the watcher relies on. That's why BEP20 defaults to
 > OnFinality + bloXroute first, with the dataseed as a last resort.
+
+> **Polygon's public nodes are rate-limited for `eth_getLogs`.** They cap each call at a
+> ~20-block range and throttle rapid bursts, so `usdt_polygon` ships with a small
+> `max_span` (20) **and** a per-chain `max_catchup` (400) so a catch-up never fires more
+> getLogs than the node tolerates. The watcher also folds all of a chain's watched
+> stablecoins into **one** `eth_getLogs` per block-chunk (not one per token), keeping the
+> call count independent of how many tokens you accept. If Polygon ever stalls, the public
+> pool has degraded — add a paid/keyed RPC via `polygon_gateway_rpc` (below) rather than
+> raising `max_catchup`.
 
 ### Overriding EVM RPCs per chain (DB setting)
 
@@ -215,8 +224,14 @@ enabled chains):
 returns as completed (aborted transfers are skipped).
 
 Related watcher tuning (see `.env.example` / `config.py`): `OPG_RESCAN_OVERLAP` (re-scan
-cushion), `OPG_MAX_CATCHUP_BLOCKS`, `OPG_WATCH_POLL_SECONDS`, and each chain's per-call
-`max_span` / `initial_lookback` in `chains.py`.
+cushion), `OPG_MAX_CATCHUP_BLOCKS` (global blocks/tick cap), `OPG_WATCH_POLL_SECONDS`, and
+each chain's per-call `max_span` / `initial_lookback` in `chains.py`. A chain may also set
+a per-chain **`max_catchup`** in its `chains.py` entry to override `OPG_MAX_CATCHUP_BLOCKS`
+for that chain alone — used to keep fragile RPCs (e.g. Polygon = 400) under their rate
+limit. Per-cycle getLogs calls ≈ `(max_catchup / max_span)` × `ceil(watched_addresses / 400)`
+— independent of the token count, since all of a chain's stablecoins are scanned in one
+call per chunk. It **must be greater than `OPG_RESCAN_OVERLAP`** or the cursor would move
+backward; `chains.py` asserts this at import.
 
 ---
 
@@ -253,6 +268,9 @@ chain you add.
     "cursor_key": "base_watch_last_block",
     "max_span": 500,                     # blocks per getLogs call (tune to the RPC)
     "initial_lookback": 200,
+    # "max_catchup": 400,                # OPTIONAL — override OPG_MAX_CATCHUP_BLOCKS for
+                                         # this chain only (lower it for a rate-limited RPC,
+                                         # e.g. Polygon). Must be > OPG_RESCAN_OVERLAP.
     "explorer": "https://basescan.org/tx/",
 },
 ```

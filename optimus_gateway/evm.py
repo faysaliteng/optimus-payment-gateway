@@ -69,27 +69,39 @@ def gas_price(endpoints, floor: int, cap: int) -> int:
 
 
 def get_logs_transfers(endpoints, contract, to_addresses, from_block, to_block):
-    """eth_getLogs for ERC-20 Transfer events sending TO one of `to_addresses` on
-    `contract`, across [from_block, to_block]. `to_addresses` may be a single address
-    or a list (a list is one OR-filtered call — how per-order addresses are scanned).
+    """eth_getLogs for ERC-20 Transfer events sending TO one of `to_addresses` across
+    [from_block, to_block].
+
+    `contract` may be a single address OR a list of contracts — a list scans ALL of a
+    chain's watched stablecoins (USDT + USDC + …) in ONE call (eth_getLogs `address`
+    accepts an array). This matters on rate-limited public nodes (e.g. Polygon): scanning
+    per-token would multiply the getLogs count by the number of tokens and can trip the
+    node's rate limit mid-catch-up, stalling the cursor. All tokens on a chain share the
+    same decimals, so the caller's chain-level divisor applies uniformly.
+
+    `to_addresses` may likewise be a single address or a list (a list is one OR-filtered
+    call — how per-order addresses are scanned).
 
     Returns (transfers, ok):
-      transfers = [{txid, log_index, from, to, raw, block}], ok=False if the RPC
+      transfers = [{txid, log_index, from, to, raw, block, contract}], ok=False if the RPC
       failed — the caller must NOT advance its block cursor on ok=False, so nothing is
       ever skipped. log_index disambiguates multiple Transfer events in ONE tx (a
-      batch/multisend) so each credits independently instead of colliding on the txid.
-    Each log is RE-VERIFIED against the contract + topics — a malicious RPC can't
-    forge a credit.
+      batch/multisend) so each credits independently instead of colliding on the txid
+      (it is unique per block, so it also keeps events across folded contracts distinct).
+    Each log is RE-VERIFIED against the watched contract set + topics — a malicious RPC
+    can't forge a credit.
     """
     if isinstance(to_addresses, str):
         to_addresses = [to_addresses]
+    contracts = [contract] if isinstance(contract, str) else list(contract)
+    contract_set = {c.lower() for c in contracts}
     topic_by_addr = {a.lower(): to_topic_address(a) for a in to_addresses}
     to_topics = list(topic_by_addr.values())
     addr_by_topic = {t.lower(): a for a, t in topic_by_addr.items()}
     params = [{
         "fromBlock": hex(int(from_block)),
         "toBlock": hex(int(to_block)),
-        "address": contract,
+        "address": contracts if len(contracts) > 1 else contracts[0],
         "topics": [EVM_TRANSFER_TOPIC, None, to_topics if len(to_topics) > 1 else to_topics[0]],
     }]
     res = rpc(endpoints, "eth_getLogs", params)
@@ -100,7 +112,7 @@ def get_logs_transfers(endpoints, contract, to_addresses, from_block, to_block):
         try:
             topics = lg.get("topics") or []
             to_topic = (topics[2] or "").lower()
-            if (lg.get("address", "").lower() != contract.lower()
+            if (lg.get("address", "").lower() not in contract_set
                     or topics[0] != EVM_TRANSFER_TOPIC
                     or to_topic not in addr_by_topic):
                 continue
@@ -114,6 +126,7 @@ def get_logs_transfers(endpoints, contract, to_addresses, from_block, to_block):
                 "to": addr_by_topic[to_topic],
                 "raw": raw,
                 "block": _hexint(lg.get("blockNumber")),
+                "contract": lg.get("address", "").lower(),
             })
         except Exception:  # noqa: BLE001
             continue

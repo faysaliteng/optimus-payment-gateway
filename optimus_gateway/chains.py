@@ -64,11 +64,14 @@ CHAINS: dict[str, dict] = {
             "USDT": "0xdac17f958d2ee523a2206206994597c13d831ec7",
             "USDC": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
         },
+        # rpc.ankr.com/eth (401 — Ankr killed keyless public RPC) and cloudflare-eth.com
+        # (-32046 "Cannot fulfill request") were both dead on a live getLogs check;
+        # replaced with mevblocker + 1rpc, verified to return eth_getLogs results.
         "rpcs": [
             "https://ethereum-rpc.publicnode.com",
             "https://eth.drpc.org",
-            "https://rpc.ankr.com/eth",
-            "https://cloudflare-eth.com",
+            "https://rpc.mevblocker.io",
+            "https://1rpc.io/eth",
         ],
         "rpc_setting": "erc20_gateway_rpc",
         "cursor_key": "erc20_watch_last_block",
@@ -87,15 +90,24 @@ CHAINS: dict[str, dict] = {
             "USDC": "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359",
             "USDC.e": "0x2791bca1f2de4661ed88a30c99a7a9449aa84174",
         },
+        # Polygon public nodes are FRAGILE for eth_getLogs: they cap each call at a
+        # ~20-block range AND rate-limit rapid calls. Three things keep the watcher under
+        # that limit: (a) max_span=20 (one call per 20 blocks); (b) the watcher folds all
+        # watched stablecoins into ONE call per chunk (not one per token — see
+        # watcher.scan_evm), so tokens don't multiply the call count; (c) max_catchup
+        # caps blocks/cycle. Multiple endpoints below give failover depth (rpc() tries
+        # them in order, moving on when one errors). Endpoints were liveness-checked;
+        # polygon-rpc.com and rpc.ankr.com/polygon were dropped (dead / 401).
         "rpcs": [
             "https://polygon-bor-rpc.publicnode.com",
             "https://polygon.drpc.org",
-            "https://polygon-rpc.com",
-            "https://rpc.ankr.com/polygon",
+            "https://polygon-bor.publicnode.com",
+            "https://1rpc.io/matic",
         ],
         "rpc_setting": "polygon_gateway_rpc",
         "cursor_key": "polygon_watch_last_block",
         "max_span": 20,
+        "max_catchup": 400,  # <=400 blocks/cycle => ~20 getLogs (folded), stays under the limit
         "initial_lookback": 60,
         "explorer": "https://polygonscan.com/tx/",
     },
@@ -278,3 +290,26 @@ def native_coin(method: str) -> str:
 def to_topic_address(addr: str) -> str:
     """20-byte address -> 32-byte left-zero-padded topic (for the Transfer TO filter)."""
     return "0x" + "0" * 24 + addr.lower().replace("0x", "")
+
+
+# --- startup invariant --------------------------------------------------------
+# The watcher computes scan_to = min(confirmed_to, from_block + max_catchup - 1) where
+# from_block = last + 1 - RESCAN_OVERLAP, so scan_to = last + (max_catchup - RESCAN_OVERLAP)
+# once caught up. A per-chain max_catchup <= RESCAN_OVERLAP therefore writes the cursor
+# BACKWARD every tick — it marches toward genesis and never scans the chain tip, a silent
+# money-loss stall. Fail loudly at import time so a mistuned chain can never ship.
+def _validate_catchup_bounds() -> None:
+    from .config import config
+    overlap = int(config.RESCAN_OVERLAP)
+    default_catchup = int(config.MAX_CATCHUP_BLOCKS)
+    for _method, _cfg in CHAINS.items():
+        if _cfg.get("scanner") != "evm":
+            continue
+        mc = int(_cfg.get("max_catchup", default_catchup))
+        if mc <= overlap:
+            raise ValueError(
+                f"chain {_method}: max_catchup ({mc}) must be > RESCAN_OVERLAP ({overlap}) "
+                "or the block cursor moves backward every tick and the watcher stalls")
+
+
+_validate_catchup_bounds()

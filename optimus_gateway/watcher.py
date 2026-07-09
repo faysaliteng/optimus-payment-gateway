@@ -63,7 +63,13 @@ def scan_evm(method: str, on_paid=None) -> dict:
     from_block = max(1, last + 1 - config.RESCAN_OVERLAP)
     if confirmed_to < from_block:
         return {"ok": True, "credited": 0}
-    scan_to = min(confirmed_to, from_block + config.MAX_CATCHUP_BLOCKS - 1)
+    # Per-chain catch-up cap: fragile chains (e.g. Polygon, whose public nodes cap
+    # getLogs at ~20-block ranges and rate-limit rapid calls) set a small "max_catchup"
+    # so one cycle never fires more calls than the RPCs tolerate; others use the global
+    # default. The cursor still advances only over blocks actually scanned, so a capped
+    # cycle just means the rest is picked up next cycle — no payment is ever skipped.
+    max_catchup = int(cfg.get("max_catchup", config.MAX_CATCHUP_BLOCKS))
+    scan_to = min(confirmed_to, from_block + max_catchup - 1)
 
     # what to watch: per-order addresses (xpub mode) or the shared address (amount-match)
     per_order = bool(config.xpub())
@@ -85,46 +91,52 @@ def scan_evm(method: str, on_paid=None) -> dict:
         to_addresses = [shared]
 
     divisor = cents_divisor(method)
+    # Scan ALL of the chain's watched stablecoins in ONE getLogs call per block-chunk
+    # (eth_getLogs `address` accepts an array). This keeps the per-cycle call count at
+    # (blocks / max_span) x address-chunks — independent of how many tokens are watched —
+    # so a rate-limited public node (Polygon) isn't hit ~3x as hard, which would trip its
+    # limit mid-catch-up and, with the all-or-nothing cursor advance below, stall it.
+    contracts = list(_watched_tokens(method).values())
+    if not contracts:
+        # no real stablecoin to watch (shouldn't happen — USDT is always real) — advance
+        # the cursor so we don't re-scan forever.
+        db.set_setting(cursor_key, str(scan_to))
+        return {"ok": True, "credited": 0}
     credited = 0
     span = int(cfg["max_span"])
     ok_all = True
-    for token_sym, contract in _watched_tokens(method).items():
-        start = from_block
-        while start <= scan_to:
-            end = min(start + span - 1, scan_to)
-            # OR-filter over up to ~1000 addresses per call is fine; chunk to be safe
-            for addr_chunk in _chunks(to_addresses, 400):
-                transfers, ok = evm.get_logs_transfers(eps, contract, addr_chunk, start, end)
-                if not ok:
-                    ok_all = False
-                    break
-                for t in transfers:
-                    whole_cent = (t["raw"] % divisor == 0)
-                    cents = t["raw"] // divisor
-                    if cents <= 0:
-                        continue
-                    # (txid, logIndex) keys the idempotency registry so a batch/multisend
-                    # tx with several Transfer events credits each one, not just the first.
-                    suffix = str(t.get("log_index", 0))
-                    if per_order:
-                        res = db.credit_by_address(method, t["to"], cents, t["txid"], suffix)
-                    else:
-                        if not whole_cent:
-                            continue  # amount-match only trusts whole-cent amounts
-                        res = db.credit_by_amount(method, cents, t["txid"], suffix)
-                    if res.get("status") == "paid":
-                        credited += 1
-                        _fire_paid(res["order_id"], on_paid)
-                    elif res.get("status") in ("partial", "topup"):
-                        log.info("%s partial credit order=%s +%d cents", method,
-                                 res.get("order_id"), cents)
-                if not ok_all:
-                    break
-            if not ok_all:
+    start = from_block
+    while start <= scan_to:
+        end = min(start + span - 1, scan_to)
+        # OR-filter over up to ~1000 addresses per call is fine; chunk to be safe
+        for addr_chunk in _chunks(to_addresses, 400):
+            transfers, ok = evm.get_logs_transfers(eps, contracts, addr_chunk, start, end)
+            if not ok:
+                ok_all = False
                 break
-            start = end + 1
+            for t in transfers:
+                whole_cent = (t["raw"] % divisor == 0)
+                cents = t["raw"] // divisor
+                if cents <= 0:
+                    continue
+                # (txid, logIndex) keys the idempotency registry so a batch/multisend
+                # tx with several Transfer events credits each one, not just the first.
+                suffix = str(t.get("log_index", 0))
+                if per_order:
+                    res = db.credit_by_address(method, t["to"], cents, t["txid"], suffix)
+                else:
+                    if not whole_cent:
+                        continue  # amount-match only trusts whole-cent amounts
+                    res = db.credit_by_amount(method, cents, t["txid"], suffix)
+                if res.get("status") == "paid":
+                    credited += 1
+                    _fire_paid(res["order_id"], on_paid)
+                elif res.get("status") in ("partial", "topup"):
+                    log.info("%s partial credit order=%s +%d cents", method,
+                             res.get("order_id"), cents)
         if not ok_all:
             break
+        start = end + 1
 
     if ok_all:
         db.set_setting(cursor_key, str(scan_to))

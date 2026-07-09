@@ -14,6 +14,7 @@ from optimus_gateway import evm
 from optimus_gateway.chains import EVM_TRANSFER_TOPIC, to_topic_address
 
 CONTRACT = "0x55d398326f99059ff775485246999027b3197955"   # BSC USDT
+USDC = "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d"        # BSC USDC
 ADDR = "0xabc0000000000000000000000000000000000001"
 OTHER = "0xdef0000000000000000000000000000000000002"
 
@@ -84,3 +85,33 @@ def test_rpc_failure_reports_not_ok(monkeypatch):
     monkeypatch.setattr(evm, "rpc", lambda eps, method, params: None)
     transfers, ok = evm.get_logs_transfers(["http://x"], CONTRACT, [ADDR], 1, 100)
     assert ok is False and transfers == []
+
+
+def test_contract_list_folds_multiple_tokens(monkeypatch):
+    """A LIST of contracts scans several stablecoins in ONE call: a log for any contract
+    in the set is accepted and tagged with its `contract`, while a log for a contract
+    outside the set is rejected (a rotated/lying RPC can't slip in an unwatched token)."""
+    good_usdt = _log(contract=CONTRACT, amount=5 * 10 ** 18, log_index=1)
+    good_usdc = _log(contract=USDC, amount=7 * 10 ** 18, log_index=2)
+    alien = _log(contract="0x" + "11" * 20, amount=9 * 10 ** 18, log_index=3)  # not watched
+    _patch(monkeypatch, [good_usdt, good_usdc, alien])
+    transfers, ok = evm.get_logs_transfers(["http://x"], [CONTRACT, USDC], [ADDR], 1, 100)
+    assert ok is True
+    assert {t["contract"]: t["raw"] for t in transfers} == {
+        CONTRACT.lower(): 5 * 10 ** 18, USDC.lower(): 7 * 10 ** 18}
+
+
+def test_address_param_is_array_only_for_multiple_contracts(monkeypatch):
+    """eth_getLogs `address` must be the ARRAY of contracts when >1 is passed (one
+    OR-filtered call), and the bare string when only one — so a single-token chain keeps
+    the exact request shape it always had."""
+    seen = {}
+
+    def fake_rpc(eps, method, params):
+        seen["address"] = params[0]["address"]
+        return []
+    monkeypatch.setattr(evm, "rpc", fake_rpc)
+    evm.get_logs_transfers(["http://x"], [CONTRACT, USDC], [ADDR], 1, 100)
+    assert seen["address"] == [CONTRACT, USDC]
+    evm.get_logs_transfers(["http://x"], CONTRACT, [ADDR], 1, 100)
+    assert seen["address"] == CONTRACT

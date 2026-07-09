@@ -251,7 +251,8 @@ latest        = evm.block_number(eps)              # tip
 confirmed_to  = latest - MIN_CONFIRMATIONS         # never scan unconfirmed blocks
 last          = settings[cursor_key]               # persisted per chain
 from_block    = max(1, last + 1 - RESCAN_OVERLAP)  # deliberate re-scan overlap
-scan_to       = min(confirmed_to, from_block + MAX_CATCHUP_BLOCKS - 1)  # bounded catch-up
+max_catchup   = cfg.get("max_catchup", MAX_CATCHUP_BLOCKS)   # per-chain override, else global
+scan_to       = min(confirmed_to, from_block + max_catchup - 1)  # bounded catch-up
 ```
 
 Invariants:
@@ -271,9 +272,14 @@ Invariants:
   is never missed. Re-scanning already-credited txids is a no-op thanks to the
   reference registry.
 - **Bounded catch-up.** After downtime the cursor walks forward at most
-  `MAX_CATCHUP_BLOCKS` (default 1500) per tick, in `max_span` sub-windows per
-  chain (BSC 80, ETH 500, Polygon 20), so it recovers gradually without asking a
-  public node for an enormous range.
+  `max_catchup` blocks per tick — a per-chain override (`cfg["max_catchup"]`) when
+  the chain sets one, else the global `MAX_CATCHUP_BLOCKS` (default 1500) — in
+  `max_span` sub-windows per chain (BSC 80, ETH 500, Polygon 20), so it recovers
+  gradually without asking a public node for an enormous range. Polygon caps
+  `max_catchup` at 400 because its public nodes rate-limit `eth_getLogs`; the cap
+  must exceed `RESCAN_OVERLAP` (asserted at import) or the cursor would regress.
+  All of a chain's watched stablecoins are scanned in **one** `getLogs` per
+  sub-window, so the call count is independent of how many tokens you accept.
 - **No-orders fast-forward.** In per-order mode, if there are currently no active
   addresses to watch, the cursor is still advanced to `scan_to` (there is nothing
   to find in those blocks), so the gateway doesn't perpetually re-scan history

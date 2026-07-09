@@ -385,6 +385,7 @@ instantly, no restart.
 | [`docs/SECURITY.md`](docs/SECURITY.md) | Key model, threat model, hardening checklist |
 | [`docs/CHAINS.md`](docs/CHAINS.md) | Networks, token contracts, adding a chain |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Docker, systemd, HTTPS, backups |
+| [`COMPARISON.md`](COMPARISON.md) | Honest comparison vs epusdt, Cryptomus & the field |
 
 ## ⚠️ Before real money
 

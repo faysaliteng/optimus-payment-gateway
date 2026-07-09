@@ -41,10 +41,9 @@ def _watch_tick():
 def _sweep_tick():
     if not config.auto_sweep():          # live-toggleable from the Setup wizard
         return
-    res = sweeper.recover_wrongnet(credit=True)
-    if res.get("credited") or res.get("swept"):
-        log.info("sweeper: credited=%s swept=%s", len(res.get("credited", [])),
-                 len(res.get("swept", [])))
+    res = sweeper.recover_wrongnet()     # sweep-only; the watcher does the crediting
+    if res.get("swept"):
+        log.info("sweeper: swept=%s", len(res.get("swept", [])))
 
 
 def _webhook_tick():

@@ -342,10 +342,11 @@ def order_detail(trade_id):
 @app.route("/recover", methods=["POST"])
 @requires_auth(as_json=True)
 def recover():
-    """Trigger one wrong-network scan + credit + sweep. Returns the sweeper's JSON
-    result ({status, credited[], swept[], scanned}). Never returns keys."""
+    """Trigger one SWEEP pass — forward any funds (incl. wrong-network deposits) to cold
+    storage. Crediting is handled continuously by the watcher (idempotent by txid+logIndex).
+    Returns the sweeper's JSON result ({status, swept[], scanned}). Never returns keys."""
     try:
-        result = sweeper.recover_wrongnet(credit=True)
+        result = sweeper.recover_wrongnet()
         return jsonify({"ok": True, "result": result})
     except Exception as exc:  # noqa: BLE001
         log.exception("recover_wrongnet failed")

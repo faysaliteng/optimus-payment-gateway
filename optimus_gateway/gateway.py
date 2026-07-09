@@ -21,6 +21,7 @@ import string
 from . import db, hdwallet
 from .chains import CHAINS, is_evm
 from .config import config
+from .security import is_safe_webhook_url
 
 _MEMO_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"  # Crockford base32 (no I L O U)
 
@@ -47,6 +48,18 @@ def create_payment(method: str, amount: float, *, merchant_order_id=None,
         raise ValueError(f"unknown method {method!r}")
     if method not in config.enabled_methods():
         raise ValueError(f"method {method!r} is not enabled")
+
+    # SSRF guard: a merchant-supplied notify_url is fetched by our server later, so
+    # refuse callbacks aimed at internal/private hosts (metadata, localhost, 10.x…)
+    # unless the operator opted in. redirect_url is browser-facing but we sanity-check
+    # its scheme too. See security.is_safe_webhook_url.
+    if notify_url and not is_safe_webhook_url(notify_url, config.ALLOW_PRIVATE_WEBHOOKS):
+        raise ValueError("notify_url must be a public http(s) URL "
+                         "(set OPG_ALLOW_PRIVATE_WEBHOOKS=true for local testing)")
+    if redirect_url:
+        from urllib.parse import urlparse
+        if urlparse(str(redirect_url)).scheme not in ("http", "https"):
+            raise ValueError("redirect_url must be an http(s) URL")
 
     xpub = config.xpub()
     shared = config.shared_address()

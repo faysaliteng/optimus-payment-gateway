@@ -58,11 +58,10 @@ def _checkxpub(xpub):
 def _recover():
     from optimus_gateway import sweeper, init as _init
     _init()
-    res = sweeper.recover_wrongnet(credit=True)
-    print("recover:", res.get("status"), "| credited:", len(res.get("credited", [])),
-          "| swept:", len(res.get("swept", [])))
-    for c in res.get("credited", []):
-        print("  credited", c)
+    # Sweep-only: forwards any funds (incl. wrong-network deposits) to cold storage.
+    # Crediting is done by the watcher (idempotent, by txid+logIndex) — run `serve`.
+    res = sweeper.recover_wrongnet()
+    print("recover (sweep-only):", res.get("status"), "| swept:", len(res.get("swept", [])))
     for s in res.get("swept", []):
         print("  swept", s)
 

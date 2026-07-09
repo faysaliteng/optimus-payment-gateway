@@ -22,10 +22,11 @@ import io
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 import optimus_gateway as opg
 from optimus_gateway import config, gateway
-from optimus_gateway.security import verify_params
+from optimus_gateway.security import authorize_merchant
 from . import workers
 
 app = FastAPI(title="Optimus Payment Gateway", version=opg.__version__)
@@ -37,26 +38,33 @@ def _startup():
     workers.start_background()
 
 
-def _require_merchant(body: dict):
-    if not config.MERCHANT_API_KEY:
-        return  # auth disabled (single-tenant / trusted network)
-    if str(body.get("api_key")) != config.MERCHANT_API_KEY:
-        raise HTTPException(401, "bad api_key")
-    if not verify_params(config.MERCHANT_API_SECRET, body):
-        raise HTTPException(401, "bad signature")
+def _require_merchant(body: dict, request: Request):
+    client_host = request.client.host if request.client else ""
+    ok, err = authorize_merchant(
+        body, client_host,
+        api_key=config.MERCHANT_API_KEY, api_secret=config.MERCHANT_API_SECRET,
+        allow_unauthenticated=config.ALLOW_UNAUTHENTICATED)
+    if not ok:
+        # 403 (not 401) for the "unauthenticated + remote" refusal so it's clearly an
+        # operator-config problem, not a bad credential.
+        raise HTTPException(401 if config.MERCHANT_API_KEY else 403, err)
 
 
 @app.post("/api/v1/order/create")
 async def create_order(request: Request):
     body = await request.json()
-    _require_merchant(body)
+    _require_merchant(body, request)
     method = str(body.get("method") or "").strip()
     try:
         amount = float(body.get("amount"))
     except (TypeError, ValueError):
         raise HTTPException(400, "amount must be a number")
     try:
-        order = gateway.create_payment(
+        # create_payment does blocking work (sqlite + a DNS-based SSRF check on
+        # notify_url); run it off the event loop so one slow DNS lookup can't stall
+        # every other request on this single-worker async server.
+        order = await run_in_threadpool(
+            gateway.create_payment,
             method, amount,
             merchant_order_id=body.get("order_id") or body.get("merchant_order_id"),
             notify_url=body.get("notify_url"),

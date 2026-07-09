@@ -77,7 +77,14 @@ class Config:
     ACCEPT_USDC = _b("OPG_ACCEPT_USDC", True)
 
     # ---- watcher tuning ----
-    MIN_CONFIRMATIONS = max(1, min(50, _i("OPG_MIN_CONFIRMATIONS", 3)))
+    # Global fallback confirmation depth. Per-chain depths (below) override it so
+    # fast-but-reorgy chains and slow-finality chains each get a sane default.
+    MIN_CONFIRMATIONS = max(1, min(50, _i("OPG_MIN_CONFIRMATIONS", 6)))
+    # Per-chain confirmations, keyed by chain_id. Tuned to each chain's finality:
+    # BSC/Polygon fast blocks but reorg-prone -> more; ETH slow but heavy -> 6;
+    # L2s (Arbitrum/Optimism/Base) sequencer soft-finality -> 5; Avalanche fast
+    # finality -> 4. Override any of them from the DB via confirmations_<method>.
+    CONFIRMATIONS_BY_CHAIN = {56: 12, 1: 6, 137: 20, 42161: 5, 10: 5, 8453: 5, 43114: 4}
     RESCAN_OVERLAP = _i("OPG_RESCAN_OVERLAP", 24)
     MAX_CATCHUP_BLOCKS = _i("OPG_MAX_CATCHUP_BLOCKS", 1500)
     WATCH_POLL_SECONDS = max(10, _i("OPG_WATCH_POLL_SECONDS", 20))
@@ -104,6 +111,13 @@ class Config:
     # Merchants authenticate create-order calls and verify our webhooks with these.
     MERCHANT_API_KEY = os.getenv("OPG_MERCHANT_API_KEY", "").strip()
     MERCHANT_API_SECRET = os.getenv("OPG_MERCHANT_API_SECRET", "").strip()
+    # When NO api key is set, create-order is allowed only from localhost (SAFE
+    # default). Flip this on to intentionally expose a keyless API behind your own
+    # trusted front-door / private network.
+    ALLOW_UNAUTHENTICATED = _b("OPG_ALLOW_UNAUTHENTICATED", False)
+    # Allow merchant notify_url / redirect_url to point at private/loopback hosts.
+    # Off by default (SSRF guard); turn on only for local webhook testing.
+    ALLOW_PRIVATE_WEBHOOKS = _b("OPG_ALLOW_PRIVATE_WEBHOOKS", False)
     WEBHOOK_MAX_RETRIES = _i("OPG_WEBHOOK_MAX_RETRIES", 6)
     WEBHOOK_TIMEOUT = _i("OPG_WEBHOOK_TIMEOUT", 12)
 
@@ -156,6 +170,19 @@ class Config:
         raw = self._s("enabled_methods", ",".join(self.ENABLED_METHODS))
         return [m.strip() for m in str(raw).split(",") if m.strip()]
 
+    def confirmations(self, method: str) -> int:
+        """Confirmation depth for an EVM method: DB override (confirmations_<method>)
+        else the per-chain default else the global MIN_CONFIRMATIONS. Clamped 1..100."""
+        from .chains import CHAINS
+        cid = CHAINS.get(method, {}).get("chain_id")
+        default = self.CONFIRMATIONS_BY_CHAIN.get(cid, self.MIN_CONFIRMATIONS)
+        raw = self._s("confirmations_%s" % method, None)
+        try:
+            n = int(raw) if raw not in (None, "") else int(default)
+        except (TypeError, ValueError):
+            n = int(default)
+        return max(1, min(100, n))
+
     def binance_enabled(self) -> bool:
         return self._sb("binance_enabled", self.BINANCE_ENABLED) and bool(self.BINANCE_API_KEY)
 
@@ -181,6 +208,10 @@ class Config:
             "binance_verify": self.binance_enabled(),
             "ton_enabled": "usdt_ton" in methods and bool(self.ton_address()),
             "min_confirmations": self.MIN_CONFIRMATIONS,
+            "confirmations_by_method": {m: self.confirmations(m) for m in methods
+                                        if m != "usdt_ton"},
+            "api_auth_required": bool(self.MERCHANT_API_KEY),
+            "unauthenticated_open": bool(self.ALLOW_UNAUTHENTICATED) and not bool(self.MERCHANT_API_KEY),
             "reservation_ttl_minutes": self.RESERVATION_TTL_MINUTES,
         }
 

@@ -188,11 +188,26 @@ def create_order(method: str, quote_amount: float, *, merchant_order_id=None,
 
 # --- crediting (idempotent) -------------------------------------------------
 def _claim_reference(conn: sqlite3.Connection, reference: str, reference_type: str,
-                     order_id: int) -> bool:
-    """Burn a reference into the registry. Returns False if already used (replay)."""
-    norm = normalize_reference(reference)
-    if not norm:
-        return True  # nothing to claim (e.g. synthetic) — allow
+                     order_id: int, ref_suffix: str = None) -> bool:
+    """Burn a reference into the registry. Returns False if already used (replay).
+
+    `ref_suffix` disambiguates references that share a normalized txid: a single
+    transaction can emit MULTIPLE watched Transfer events (batch/multisend), so the
+    registry key is normalized_txid#logIndex — otherwise only the first transfer in
+    such a tx would credit and the rest would be dropped as 'already_used'. Wrong-net
+    recovery reuses this with an arrived-total suffix so repeat deposits stay unique."""
+    base = normalize_reference(reference)
+    if not base:
+        return True  # nothing to claim (e.g. purely synthetic) — allow
+    norm = base if ref_suffix in (None, "") else "%s#%s" % (base, ref_suffix)
+    # Backward-compat across the upgrade that introduced the #suffix key format: a
+    # pre-upgrade deployment stored bare `base` (no suffix). If that legacy key was
+    # already burned for this txid, treat the suffixed key as used too, so the first
+    # post-upgrade re-scan of the RESCAN_OVERLAP window doesn't re-credit it.
+    if norm != base and conn.execute(
+            "SELECT 1 FROM payment_reference_registry WHERE normalized_reference=?",
+            (base,)).fetchone():
+        return False
     try:
         conn.execute(
             "INSERT INTO payment_reference_registry(normalized_reference, original_reference,"
@@ -204,11 +219,11 @@ def _claim_reference(conn: sqlite3.Connection, reference: str, reference_type: s
 
 
 def _apply_credit(conn: sqlite3.Connection, order: sqlite3.Row, cents: int, txid: str,
-                  reference_type: str) -> dict:
+                  reference_type: str, ref_suffix: str = None) -> dict:
     """Core credit: burn txid, accumulate, flip to PAID when covered. Assumes an open
     IMMEDIATE transaction. Returns a status dict."""
     oid = int(order["id"])
-    if txid and not _claim_reference(conn, txid, reference_type, oid):
+    if txid and not _claim_reference(conn, txid, reference_type, oid, ref_suffix):
         return {"status": "already_used", "order_id": oid}
     new_total = int(order["received_cents"] or 0) + int(cents)
     tx_hashes = (order["tx_hashes"] or "")
@@ -230,12 +245,13 @@ def _apply_credit(conn: sqlite3.Connection, order: sqlite3.Row, cents: int, txid
     return {**base, "status": "partial" if active else "topup"}
 
 
-def credit_by_address(reference_type: str, to_address: str, cents: int, txid: str) -> dict:
+def credit_by_address(reference_type: str, to_address: str, cents: int, txid: str,
+                      ref_suffix: str = None) -> dict:
     """Per-order-address mode: credit an on-chain transfer to whichever order owns
     `to_address`. Matched by ADDRESS ALONE — EVM per-order addresses are globally
     unique, so this credits the right order even if the buyer used the WRONG EVM
-    network (that's how wrong-network recovery re-uses this path). Idempotent by txid;
-    `reference_type` (the chain it arrived on) only tags the registry entry."""
+    network (that's how wrong-network recovery re-uses this path). Idempotent by
+    (txid, ref_suffix); `reference_type` (the chain it arrived on) only tags the entry."""
     conn = connect()
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -245,7 +261,7 @@ def credit_by_address(reference_type: str, to_address: str, cents: int, txid: st
         if not order:
             conn.rollback()
             return {"status": "no_order", "address": to_address}
-        res = _apply_credit(conn, order, cents, txid, reference_type)
+        res = _apply_credit(conn, order, cents, txid, reference_type, ref_suffix)
         conn.commit()
         return res
     finally:
@@ -267,9 +283,28 @@ def all_evm_order_addresses() -> list[dict]:
         conn.close()
 
 
-def credit_by_amount(method: str, cents: int, txid: str) -> dict:
+def all_active_order_addresses() -> list[dict]:
+    """Every per-order address for a pending or recently-active order ACROSS ALL EVM
+    methods — so each chain's watcher can also detect a WRONG-NETWORK payment to one of
+    our addresses. credit_by_address matches by address alone and is idempotent by
+    (txid, logIndex), so the watcher crediting a foreign-chain deposit here can never
+    double-credit the correct-chain path. This unifies crediting in ONE place (the
+    watcher); the sweeper only moves funds."""
+    conn = connect()
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT pay_address FROM orders WHERE pay_address IS NOT NULL "
+            "AND address_index IS NOT NULL "
+            "AND (status='pending' OR reservation_expires_at >= datetime('now', ?))",
+            ("-%d minutes" % config.AMOUNT_COOLDOWN_MINUTES,)).fetchall()
+        return [{"pay_address": r["pay_address"]} for r in rows]
+    finally:
+        conn.close()
+
+
+def credit_by_amount(method: str, cents: int, txid: str, ref_suffix: str = None) -> dict:
     """Amount-match mode: credit a WHOLE-cent transfer to the order that reserved this
-    exact cents value on the shared address. Idempotent by txid."""
+    exact cents value on the shared address. Idempotent by (txid, ref_suffix)."""
     conn = connect()
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -279,7 +314,7 @@ def credit_by_amount(method: str, cents: int, txid: str) -> dict:
         if not order:
             conn.rollback()
             return {"status": "no_order", "cents": int(cents)}
-        res = _apply_credit(conn, order, cents, txid, method)
+        res = _apply_credit(conn, order, cents, txid, method, ref_suffix)
         conn.commit()
         return res
     finally:

@@ -169,9 +169,8 @@
       out.textContent = JSON.stringify(data, null, 2);
       if (res.ok && data.ok) {
         const r = data.result || {};
-        const credited = (r.credited || []).length;
         const swept = (r.swept || []).length;
-        status.textContent = 'Done: ' + r.status + ' · credited ' + credited +
+        status.textContent = 'Done (sweep-only): ' + r.status +
                              ' · swept ' + swept + ' · scanned ' + (r.scanned || 0);
       } else {
         status.textContent = 'Error: ' + (data.error || res.status);

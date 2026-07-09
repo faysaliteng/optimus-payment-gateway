@@ -74,8 +74,10 @@ def get_logs_transfers(endpoints, contract, to_addresses, from_block, to_block):
     or a list (a list is one OR-filtered call — how per-order addresses are scanned).
 
     Returns (transfers, ok):
-      transfers = [{txid, from, to, raw, block}], ok=False if the RPC failed — the
-      caller must NOT advance its block cursor on ok=False, so nothing is ever skipped.
+      transfers = [{txid, log_index, from, to, raw, block}], ok=False if the RPC
+      failed — the caller must NOT advance its block cursor on ok=False, so nothing is
+      ever skipped. log_index disambiguates multiple Transfer events in ONE tx (a
+      batch/multisend) so each credits independently instead of colliding on the txid.
     Each log is RE-VERIFIED against the contract + topics — a malicious RPC can't
     forge a credit.
     """
@@ -107,6 +109,7 @@ def get_logs_transfers(endpoints, contract, to_addresses, from_block, to_block):
                 continue
             out.append({
                 "txid": lg.get("transactionHash"),
+                "log_index": _hexint(lg.get("logIndex")),
                 "from": "0x" + topics[1][-40:],
                 "to": addr_by_topic[to_topic],
                 "raw": raw,

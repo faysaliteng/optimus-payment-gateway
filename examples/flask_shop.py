@@ -27,6 +27,9 @@ Run it:
     export OPG_GATEWAY_XPUB=xpub6C...            # your watch-only receiving xpub
     export OPG_ENABLED_METHODS=usdt_bep20
     export OPG_BASE_URL=http://localhost:5000    # so checkout/redirect links resolve
+    export OPG_ALLOW_PRIVATE_WEBHOOKS=true       # THIS DEMO posts its webhook to localhost;
+                                                 # the SSRF guard blocks private notify_url
+                                                 # by default — only relax it for local dev
     export OPG_MERCHANT_API_SECRET=$(python -c "import secrets;print(secrets.token_hex(32))")
     python examples/flask_shop.py
 """

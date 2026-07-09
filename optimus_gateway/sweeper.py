@@ -122,18 +122,27 @@ def _gas_up_and_sweep(method, xprv, index, addr, balances, dest, gp, tank_priv, 
 
 
 def recover_wrongnet(credit: bool = True) -> dict:
-    """Scan every per-order address on every EVM chain for USDT/USDC that landed there
-    (any network). CREDIT the owning order (idempotent) and sweep to the main wallet.
-    This is BOTH the wrong-network recovery AND the normal auto-sweep for per-order
-    mode. Returns {status, credited, swept, scanned}."""
+    """SWEEP-ONLY money-out. Scan every per-order address on every EVM chain and forward
+    any USDT/USDC sitting there (including WRONG-NETWORK deposits) home to the cold wallet.
+
+    CREDITING is NOT done here — the watcher credits every deposit to a per-order address
+    on any EVM chain by its real (txid, logIndex), idempotently (see
+    db.all_active_order_addresses). Keeping credit in one place removes the whole class of
+    balance-based double-credit / stale-balance / equal-amount-collision bugs. The
+    `credit` argument is retained for API/CLI compatibility and is ignored.
+
+    Note: a deposit that only arrives AFTER its order has expired (past the reservation +
+    cooldown window the watcher scans) is still swept safely to cold storage, but is not
+    auto-credited to the order — reconcile that rare case manually.
+    Returns {status, swept, scanned}."""
     dest = (config.sweep_destination() or "").strip()
     xprv = _xprv()
     if not xprv:
-        return {"status": "no_key", "credited": [], "swept": []}
+        return {"status": "no_key", "swept": []}
     if not dest:
-        return {"status": "no_destination", "credited": [], "swept": []}
+        return {"status": "no_destination", "swept": []}
     rows = db.all_evm_order_addresses()
-    credited, swept = [], []
+    swept = []
     for method in EVM_METHODS:
         eps = _rpcs(method)
         cid = chain_id(method)
@@ -145,7 +154,6 @@ def recover_wrongnet(credit: bool = True) -> dict:
         except Exception:  # noqa: BLE001
             tank_priv = tank_addr = None
             tank_nonce = 0
-        divisor = cents_divisor(method)
         for r in rows:
             idx = r.get("address_index")
             addr = r.get("pay_address")
@@ -157,25 +165,14 @@ def recover_wrongnet(credit: bool = True) -> dict:
             # safety: confirm we actually control this derived address
             if hdwallet.address_of_privkey(hdwallet.child_privkey(xprv, int(idx))).lower() != addr.lower():
                 continue
-            if credit:
-                for sym, contract, raw in bals:
-                    cents = int(raw // divisor)
-                    if cents <= 0:
-                        continue
-                    synth = "WRONGNET-%s-%s-%s" % (method.upper(), addr.lower(), contract.lower())
-                    res = db.credit_by_address(method, addr, cents, synth)
-                    if res.get("status") in ("paid", "partial", "topup"):
-                        credited.append({"method": method, "address": addr, "token": sym,
-                                         "amount": round(cents / 100.0, 2),
-                                         "order_id": res.get("order_id"), "status": res.get("status")})
             sent, tank_nonce, st = _gas_up_and_sweep(
                 method, xprv, int(idx), addr, bals, dest, gp, tank_priv, tank_addr, tank_nonce)
             swept.extend(sent)
-    return {"status": "ok", "credited": credited, "swept": swept, "scanned": len(rows)}
+    return {"status": "ok", "swept": swept, "scanned": len(rows)}
 
 
-# sweep_once is an alias — in per-order mode recovery already sweeps everything found.
+# sweep_once — same sweep-only pass (the watcher already credited everything).
 def sweep_once() -> dict:
     if not config.auto_sweep():
         return {"status": "disabled"}
-    return recover_wrongnet(credit=False)
+    return recover_wrongnet()

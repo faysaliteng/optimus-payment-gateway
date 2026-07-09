@@ -226,8 +226,8 @@ end-to-end. ✅
    **checkout page with a QR**).
 2. You show that to the buyer.
 3. The buyer pays; the gateway **sees it on-chain and credits it** (safely, once).
-4. The gateway **notifies your app** ("paid") and **optionally forwards the money to your
-   cold wallet.**
+4. The gateway **notifies your app** ("paid") and — with auto-sweep on — **forwards the
+   money into your one cold wallet** (paying gas from the gas tank).
 
 ---
 

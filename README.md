@@ -8,6 +8,15 @@ USDT / USDC on **BSC (BEP20) · Ethereum · Polygon · TON**, with a click-throu
 automatic payment detection, automatic forwarding to your cold wallet, and
 wrong-network recovery. Point it at your wallet's **xpub** and it does the rest.
 
+[![Tests](https://github.com/faysaliteng/optimus-payment-gateway/actions/workflows/tests.yml/badge.svg)](https://github.com/faysaliteng/optimus-payment-gateway/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Non-custodial](https://img.shields.io/badge/custody-none%20(your%20keys)-orange.svg)](docs/SECURITY.md)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![Stars](https://img.shields.io/github/stars/faysaliteng/optimus-payment-gateway?style=social)](https://github.com/faysaliteng/optimus-payment-gateway/stargazers)
+
+**If this saves you from a custodial processor, please ⭐ star the repo — it helps others find it.**
+
 </div>
 
 > **New here? You're in the right place.** This README is written so a **complete
@@ -336,3 +345,23 @@ This software moves real crypto. Please: **test on tiny amounts first**, keep yo
 backup words **offline**, put only pocket-change in the gas tank, and read
 [`docs/SECURITY.md`](docs/SECURITY.md). MIT licensed — free to use, modify, and sell,
 with **no warranty**. You are responsible for your keys and your local laws.
+
+---
+
+## 🤝 Contributing & community
+
+Contributions are very welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md). Found a bug or
+have an idea? [Open an issue](https://github.com/faysaliteng/optimus-payment-gateway/issues).
+Adding a chain, a wallet integration, or a language example? Send a PR. Security issue?
+See [`SECURITY.md`](SECURITY.md).
+
+## 👤 Author
+
+**MD FAYSAL MAHMUD** — built and maintained by [@faysaliteng](https://github.com/faysaliteng).
+
+If Optimus Payment Gateway is useful to you, the best thank-you is a **⭐ star** and
+sharing it with someone who's tired of custodial processors.
+
+## 📜 License
+
+[MIT](LICENSE) © MD FAYSAL MAHMUD. Free to use, modify, and build on — commercially too.

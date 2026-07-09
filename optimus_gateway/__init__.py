@@ -20,6 +20,8 @@ from .db import init_db
 from .gateway import create_payment, get_payment
 
 __version__ = "1.0.0"
+__author__ = "MD FAYSAL MAHMUD"
+__license__ = "MIT"
 __all__ = ["init", "config", "create_payment", "get_payment"]
 
 

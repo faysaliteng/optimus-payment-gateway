@@ -1,0 +1,23 @@
+name: 💡 Feature request
+description: Suggest an idea or a new chain/integration
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+    validations: { required: true }
+  - type: textarea
+    id: idea
+    attributes:
+      label: Proposed solution
+    validations: { required: true }
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Type
+      options: [New chain / token, Wallet or platform integration, Merchant API, Admin panel, Docs, Other]
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

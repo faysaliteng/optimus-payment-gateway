@@ -1,0 +1,43 @@
+name: 🐛 Bug report
+description: Something isn't working as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Thanks for the report! ⚠️ **Do not paste any private key, xprv, or seed phrase.**"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations: { required: true }
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Configure ...
+        2. Create a payment for ...
+        3. See error ...
+    validations: { required: true }
+  - type: dropdown
+    id: chain
+    attributes:
+      label: Network(s) involved
+      multiple: true
+      options: [BSC / BEP20, Ethereum / ERC20, Polygon, TON, N/A]
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      placeholder: OS, Python version, Docker or bare, watch-only xpub or dedicated wallet
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste logs (redact addresses/keys). This will be formatted as code.
+      render: shell

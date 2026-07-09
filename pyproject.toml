@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "optimus-payment-gateway"
+version = "1.0.0"
+description = "Self-hosted, non-custodial, multi-chain crypto payment gateway — USDT/USDC on BSC, Ethereum, Polygon and TON, with per-order xpub addresses, auto-sweep to cold storage, and wrong-network recovery."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "MD FAYSAL MAHMUD" }]
+maintainers = [{ name = "MD FAYSAL MAHMUD" }]
+keywords = [
+  "crypto", "cryptocurrency", "payment-gateway", "payments", "usdt", "usdc",
+  "stablecoin", "bep20", "erc20", "trc20", "polygon", "ton", "bsc", "ethereum",
+  "web3", "blockchain", "non-custodial", "self-hosted", "hd-wallet", "xpub",
+  "merchant", "checkout", "webhook", "fastapi",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Financial and Insurance Industry",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Office/Business :: Financial",
+  "Topic :: Internet :: WWW/HTTP",
+  "Topic :: Security :: Cryptography",
+]
+dependencies = [
+  "bip-utils>=2.9.3",
+  "eth-account>=0.11.0",
+  "eth-utils>=4.0.0",
+  "fastapi>=0.110.0",
+  "uvicorn[standard]>=0.29.0",
+  "segno>=1.6.1",
+  "flask>=3.0.0",
+  "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.urls]
+Homepage = "https://github.com/faysaliteng/optimus-payment-gateway"
+Documentation = "https://github.com/faysaliteng/optimus-payment-gateway/tree/main/docs"
+Issues = "https://github.com/faysaliteng/optimus-payment-gateway/issues"
+Source = "https://github.com/faysaliteng/optimus-payment-gateway"
+
+[project.scripts]
+optimus-gateway = "optimus_gateway.__main__:main"
+
+[tool.setuptools]
+packages = ["optimus_gateway", "server"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

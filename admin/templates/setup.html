@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}Setup{% endblock %}
+{% block content %}
+<style>
+  .wiz{max-width:820px;margin:0 auto}
+  .step{background:#131a30;border:1px solid #24304f;border-radius:16px;padding:20px 22px;margin:0 0 18px}
+  .step h2{margin:0 0 4px;font-size:16px}.step .hint{color:#8ea2c9;font-size:13px;margin:0 0 14px;line-height:1.6}
+  .num{display:inline-flex;width:24px;height:24px;border-radius:50%;background:#2b3a63;color:#cfe0ff;
+    align-items:center;justify-content:center;font-size:13px;font-weight:700;margin-right:8px}
+  label.f{display:block;color:#8ea2c9;font-size:12px;text-transform:uppercase;letter-spacing:.4px;margin:12px 0 5px}
+  input[type=text],select{width:100%;background:#0b1020;border:1px solid #24304f;color:#e8eefc;border-radius:10px;
+    padding:11px 12px;font-family:ui-monospace,monospace;font-size:13px;box-sizing:border-box}
+  .btn{background:#2f6bff;color:#fff;border:0;border-radius:10px;padding:10px 16px;font-weight:700;cursor:pointer;font-size:14px}
+  .btn.ghost{background:#1b2440;color:#cfe0ff;border:1px solid #33436e}
+  .btn:disabled{opacity:.5;cursor:default}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .chk{display:flex;gap:8px;align-items:center;background:#0b1020;border:1px solid #24304f;border-radius:10px;
+    padding:9px 12px;font-size:13px;cursor:pointer}
+  .ok{color:#5fe39a}.err{color:#ff8a8a}.warn{color:#f5c451}
+  .box{background:#0b1020;border:1px solid #24304f;border-radius:10px;padding:12px;margin-top:10px;font-size:12.5px}
+  .mono{font-family:ui-monospace,monospace;word-break:break-all}
+  .flash{padding:11px 14px;border-radius:10px;margin-bottom:16px;font-size:13.5px}
+  .flash.ok{background:#123a24;color:#8ff0b5}.flash.error{background:#3a1620;color:#ff9aa7}
+  .status-pill{font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px}
+  .green{background:#123a24;color:#5fe39a}.grey{background:#26314f;color:#9fb0d6}
+  .seed{background:#2a1e07;border:1px solid #5a4410;border-radius:10px;padding:14px;margin-top:10px}
+  .seed .words{font-family:ui-monospace,monospace;font-size:15px;line-height:1.9;color:#ffe08a;word-spacing:6px}
+  table.addrs{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}
+  table.addrs td{padding:4px 6px;border-bottom:1px solid #1b2440}
+</style>
+
+<div class="wiz">
+  <div class="row" style="justify-content:space-between;margin-bottom:8px">
+    <h1 style="margin:0">Setup</h1>
+    <span class="status-pill {{ 'green' if summary.configured else 'grey' }}">
+      {{ '● Live & configured' if summary.configured else '○ Not configured yet' }}</span>
+  </div>
+  <p class="hint" style="color:#8ea2c9">Paste your <b>xpub</b> (watch-only) or generate a dedicated wallet, pick your
+    networks, and hit Save. Changes apply instantly — no restart. Nothing here is your seed phrase.</p>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in messages %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}
+  {% endwith %}
+
+  <!-- STEP 1: receiving wallet -->
+  <div class="step">
+    <h2><span class="num">1</span>Your receiving wallet</h2>
+    <p class="hint">The gateway derives a fresh address per order from your <b>account xpub</b> (watch-only — it can
+      generate addresses but can't spend). Get it from any wallet — see <span class="mono">docs/XPUB_GUIDE.md</span>.</p>
+
+    <form method="post" action="{{ url_for('setup_save') }}" id="mainForm">
+      <label class="f">Account xpub (recommended)</label>
+      <input type="text" name="xpub" id="xpub" placeholder="xpub6C… (watch-only, safe to paste)"
+             value="{{ '••••••••  (already set — paste a new one to replace)' if xpub_set else '' }}">
+      <div class="row" style="margin-top:8px">
+        <button type="button" class="btn ghost" onclick="validateXpub()">Validate &amp; preview addresses</button>
+        <span id="xpubMsg" class="hint" style="margin:0"></span>
+      </div>
+      <div id="xpubAddrs" class="box" style="display:none"></div>
+
+      <details style="margin-top:14px">
+        <summary style="cursor:pointer;color:#8ea2c9;font-size:13px">Don't have an xpub? Generate a dedicated wallet →</summary>
+        <div class="box">
+          <p class="hint">Creates a brand-new wallet <b>just for the gateway</b>. Its spend key is saved server-side in a
+            locked file (<span class="mono">{{ summary.sweep_key_present and '✓ present' or 'private/…/account.xprv' }}</span>)
+            so auto-sweep works. You'll see the 12-word backup <b>once</b> — write it down offline.</p>
+          <button type="button" class="btn" onclick="genWallet()" id="genBtn">⚡ Generate dedicated wallet</button>
+          <div id="genOut"></div>
+        </div>
+      </details>
+
+      <!-- alternative: shared address (amount-match) -->
+      <details style="margin-top:8px">
+        <summary style="cursor:pointer;color:#8ea2c9;font-size:13px">Advanced: use one shared address (amount-match) instead</summary>
+        <div class="box">
+          <label class="f">Shared receive address (only if you leave xpub empty)</label>
+          <input type="text" name="shared_address" placeholder="0x… — orders matched by a unique cents amount"
+                 value="{{ shared_address if shared_address and not xpub_set else '' }}">
+        </div>
+      </details>
+
+      <!-- STEP 2: networks -->
+      <h2 style="margin-top:22px"><span class="num">2</span>Networks to accept</h2>
+      <p class="hint">Enable the chains you want. USDT + (optionally) USDC on each.</p>
+      <div class="row">
+        {% for m, c in chains.items() %}
+        <label class="chk"><input type="checkbox" name="methods" value="{{ m }}"
+          {{ 'checked' if m in enabled }}> {{ c.label }}</label>
+        {% endfor %}
+      </div>
+      <label class="chk" style="display:inline-flex;margin-top:12px">
+        <input type="checkbox" name="accept_usdc" {{ 'checked' if accept_usdc }}> Also accept USDC (not just USDT)</label>
+
+      <!-- TON address (needed only if TON enabled) -->
+      <label class="f">TON receive address <span style="text-transform:none;color:#6c7ea6">(only if TON enabled)</span></label>
+      <input type="text" name="ton_address" placeholder="UQ… / EQ… your TON wallet" value="{{ ton_address }}">
+
+      <!-- STEP 3: sweep -->
+      <h2 style="margin-top:22px"><span class="num">3</span>Auto-forward to your cold wallet (optional)</h2>
+      <p class="hint">Automatically move every payment to a cold wallet you control. Needs the dedicated wallet's spend key
+        ({{ '✓ present' if summary.sweep_key_present else 'generate one above first' }}) and a little native coin in the
+        gas tank per chain. Your cold wallet's seed is never stored here.</p>
+      <label class="f">Cold main wallet (sweep destination)</label>
+      <input type="text" name="sweep_destination" placeholder="0x… your cold wallet" value="{{ sweep_dest }}">
+      <label class="chk" style="display:inline-flex;margin-top:12px">
+        <input type="checkbox" name="auto_sweep" {{ 'checked' if auto_sweep }}> Enable auto-sweep + wrong-network recovery</label>
+
+      <div style="margin-top:22px"><button type="submit" class="btn">💾 Save &amp; go live</button></div>
+    </form>
+  </div>
+</div>
+
+<script>
+async function validateXpub(){
+  const x=document.getElementById('xpub').value.trim();
+  const msg=document.getElementById('xpubMsg'), box=document.getElementById('xpubAddrs');
+  if(!x||x.indexOf('•')>=0){msg.innerHTML='<span class="warn">Paste an xpub to validate.</span>';return;}
+  msg.textContent='Checking…';box.style.display='none';
+  const r=await fetch('{{ url_for("setup_validate_xpub") }}',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({xpub:x})});
+  const d=await r.json();
+  if(!d.ok){msg.innerHTML='<span class="err">✗ '+(d.error||'invalid')+'</span>';return;}
+  msg.innerHTML='<span class="ok">✓ Valid watch-only xpub</span>';
+  let h='<b>Your first receiving addresses</b> — confirm address #1 matches your wallet:<table class="addrs">';
+  d.addresses.forEach(a=>h+='<tr><td class=muted>#'+a.index+'</td><td class="mono">'+a.address+'</td></tr>');
+  box.innerHTML=h+'</table>';box.style.display='block';
+}
+async function genWallet(){
+  const btn=document.getElementById('genBtn'), out=document.getElementById('genOut');
+  if(!confirm('Generate a NEW dedicated gateway wallet? Its spend key will be saved on this server (0600). Back up the words shown next.'))return;
+  btn.disabled=true;out.innerHTML='<p class=hint>Generating…</p>';
+  const r=await fetch('{{ url_for("setup_generate_wallet") }}',{method:'POST'});
+  const d=await r.json();btn.disabled=false;
+  if(!d.ok){out.innerHTML='<p class="err">✗ '+(d.error||'failed')+'</p>';return;}
+  out.innerHTML='<div class="seed"><b class="warn">⚠ WRITE THESE 12 WORDS DOWN OFFLINE — shown only once. Anyone with them controls this gateway wallet.</b>'
+    +'<div class="words">'+d.mnemonic+'</div></div>'
+    +'<div class="box">✓ Saved. Your xpub is now set. <b>Gas tank</b> (fund with a little BNB/ETH/POL per chain):<br>'
+    +'<span class="mono">'+d.gas_tank+'</span></div>';
+  document.getElementById('xpub').value='••••••••  (dedicated wallet set)';
+}
+</script>
+{% endblock %}

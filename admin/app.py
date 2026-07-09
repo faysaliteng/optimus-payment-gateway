@@ -30,11 +30,13 @@ import logging
 import os
 import sys
 
-from flask import Flask, Response, jsonify, redirect, render_template, request, url_for
+from flask import (Flask, Response, flash, jsonify, redirect, render_template,
+                   request, url_for)
 
 import optimus_gateway as opg
-from optimus_gateway import config, db, gateway, sweeper
+from optimus_gateway import config, db, gateway, hdwallet, sweeper
 from optimus_gateway import chains  # read-only: chain labels/short names for display
+from optimus_gateway.chains import CHAINS, EVM_METHODS
 
 log = logging.getLogger("optimus_gateway.admin")
 
@@ -197,6 +199,9 @@ def _gas_tanks() -> tuple[list[dict], str | None]:
 @app.route("/")
 @requires_auth
 def dashboard():
+    # First run: no receiving wallet yet -> take the operator straight to Setup.
+    if not config.is_configured():
+        return redirect(url_for("setup"))
     counts = _order_counts()
     tanks, gas_error = _gas_tanks()
     recent = db.list_orders(limit=8)
@@ -208,9 +213,83 @@ def dashboard():
         gas_error=gas_error,
         gas_threshold=config.GAS_ALERT_THRESHOLD,
         summary=config.summary(),
-        enabled_methods=config.ENABLED_METHODS,
+        enabled_methods=config.enabled_methods(),
         recent=recent,
     )
+
+
+# --------------------------------------------------------------------------- #
+#  Setup wizard — "paste your xpub and go". Persists to DB settings (live, no
+#  restart). Money-sensitive: validates the xpub, previews addresses so you can
+#  confirm it's YOUR wallet, and can generate a dedicated hot wallet whose spend
+#  key is written ONLY to the 0600 file (never returned to the browser).
+# --------------------------------------------------------------------------- #
+@app.route("/setup")
+@requires_auth
+def setup():
+    s = config.summary()
+    return render_template(
+        "setup.html", active="setup", summary=s, chains=CHAINS, evm_methods=EVM_METHODS,
+        enabled=config.enabled_methods(), xpub_set=bool(config.xpub()),
+        shared_address=config.shared_address(), sweep_dest=config.sweep_destination(),
+        auto_sweep=config.auto_sweep(), accept_usdc=config.accept_usdc(),
+        ton_address=config.ton_address(), sweep_key_present=s["sweep_key_present"])
+
+
+@app.route("/setup/validate-xpub", methods=["POST"])
+@requires_auth(as_json=True)
+def setup_validate_xpub():
+    xpub = str((request.json or {}).get("xpub") or "").strip()
+    r = hdwallet.validate_xpub(xpub)
+    if r.get("ok"):
+        # preview the first receiving addresses so the operator can confirm this is
+        # really their wallet (index 1 should match address #1 in their wallet app).
+        r["addresses"] = [{"index": i, "address": hdwallet.address_from_xpub(xpub, i)}
+                          for i in range(1, 6)]
+    return jsonify(r)
+
+
+@app.route("/setup/generate-wallet", methods=["POST"])
+@requires_auth(as_json=True)
+def setup_generate_wallet():
+    """Create a dedicated hot wallet, save its xprv to the 0600 file, and set the
+    xpub live. Returns the mnemonic ONCE (for offline backup) + xpub + gas-tank
+    address. The private xprv is NEVER returned."""
+    try:
+        w = hdwallet.generate_dedicated_wallet()
+        hdwallet.save_sweep_xprv(config.GATEWAY_SWEEP_KEY_PATH, w["account_xprv"])
+    except Exception as exc:  # noqa: BLE001
+        log.exception("generate_dedicated_wallet failed")
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    db.set_setting("gateway_xpub", w["account_xpub"])
+    return jsonify({"ok": True, "mnemonic": w["mnemonic"], "xpub": w["account_xpub"],
+                    "gas_tank": w["address_0"],
+                    "key_path": config.GATEWAY_SWEEP_KEY_PATH})
+
+
+@app.route("/setup/save", methods=["POST"])
+@requires_auth
+def setup_save():
+    f = request.form
+    xpub = (f.get("xpub") or "").strip()
+    shared = (f.get("shared_address") or "").strip()
+    if xpub:
+        r = hdwallet.validate_xpub(xpub)
+        if not r.get("ok"):
+            flash("xpub rejected: %s" % r.get("error"), "error")
+            return redirect(url_for("setup"))
+        db.set_setting("gateway_xpub", xpub)
+    if shared and not xpub:
+        db.set_setting("shared_receive_address", shared)
+    methods = [m for m in f.getlist("methods") if m in CHAINS]
+    if methods:
+        db.set_setting("enabled_methods", ",".join(methods))
+    db.set_setting("accept_usdc", "true" if f.get("accept_usdc") else "false")
+    db.set_setting("sweep_destination", (f.get("sweep_destination") or "").strip())
+    db.set_setting("auto_sweep", "true" if f.get("auto_sweep") else "false")
+    db.set_setting("ton_address", (f.get("ton_address") or "").strip())
+    flash("Settings saved — the gateway is now live with these values.", "ok")
+    return redirect(url_for("setup"))
 
 
 @app.route("/orders")

@@ -39,7 +39,7 @@ def _watch_tick():
 
 
 def _sweep_tick():
-    if not config.AUTO_SWEEP_ENABLED:
+    if not config.auto_sweep():          # live-toggleable from the Setup wizard
         return
     res = sweeper.recover_wrongnet(credit=True)
     if res.get("credited") or res.get("swept"):
@@ -59,7 +59,8 @@ def start_background() -> None:
     threading.Thread(target=_loop, args=("watcher", _watch_tick, config.WATCH_POLL_SECONDS),
                      daemon=True).start()
     threading.Thread(target=_loop, args=("webhook", _webhook_tick, 5), daemon=True).start()
-    if config.AUTO_SWEEP_ENABLED:
-        threading.Thread(target=_loop, args=("sweeper", _sweep_tick, config.WRONGNET_POLL_SECONDS),
-                         daemon=True).start()
+    # Always run the sweeper thread; each tick checks the live auto_sweep() flag, so
+    # you can turn sweeping on/off from the Setup wizard without a restart.
+    threading.Thread(target=_loop, args=("sweeper", _sweep_tick, config.WRONGNET_POLL_SECONDS),
+                     daemon=True).start()
     log.info("background workers started (%s)", config.summary())

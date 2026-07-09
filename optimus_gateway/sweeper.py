@@ -71,7 +71,7 @@ def _token_balances(eps, method: str, addr: str) -> list[tuple]:
     """[(symbol, contract, raw)] for every token with a balance at addr on this chain."""
     out = []
     for sym, contract in CHAINS[method]["tokens"].items():
-        if sym != "USDT" and not config.ACCEPT_USDC:
+        if sym != "USDT" and not config.accept_usdc():
             continue
         b = evm.token_balance(eps, contract, addr)
         if b > 0:
@@ -120,7 +120,7 @@ def recover_wrongnet(credit: bool = True) -> dict:
     (any network). CREDIT the owning order (idempotent) and sweep to the main wallet.
     This is BOTH the wrong-network recovery AND the normal auto-sweep for per-order
     mode. Returns {status, credited, swept, scanned}."""
-    dest = (config.SWEEP_DESTINATION or "").strip()
+    dest = (config.sweep_destination() or "").strip()
     xprv = _xprv()
     if not xprv:
         return {"status": "no_key", "credited": [], "swept": []}
@@ -129,9 +129,6 @@ def recover_wrongnet(credit: bool = True) -> dict:
     rows = db.all_evm_order_addresses()
     credited, swept = [], []
     for method in EVM_METHODS:
-        if method not in config.ENABLED_METHODS and method != "usdt_bep20":
-            # still recover on the base chains even if a method is display-disabled
-            pass
         eps = _rpcs(method)
         cid = chain_id(method)
         gp = _gas_price(eps, cid)
@@ -173,6 +170,6 @@ def recover_wrongnet(credit: bool = True) -> dict:
 
 # sweep_once is an alias — in per-order mode recovery already sweeps everything found.
 def sweep_once() -> dict:
-    if not config.AUTO_SWEEP_ENABLED:
+    if not config.auto_sweep():
         return {"status": "disabled"}
     return recover_wrongnet(credit=False)

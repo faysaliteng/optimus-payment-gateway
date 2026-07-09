@@ -103,22 +103,76 @@ class Config:
     ADMIN_PASSWORD = os.getenv("OPG_ADMIN_PASSWORD", "")  # empty = admin disabled
     ADMIN_SECRET_KEY = os.getenv("OPG_ADMIN_SECRET_KEY", os.urandom(24).hex())
 
-    @classmethod
-    def summary(cls) -> dict:
-        """Non-secret snapshot for /health and logs."""
+    # ------------------------------------------------------------------
+    #  LIVE config — the "hot" settings are read from the DB first (so the
+    #  admin Setup Wizard can change them with no restart), falling back to the
+    #  env var above. Bootstrap/security values (DB_PATH, HOST/PORT, admin creds,
+    #  merchant secret, sweep KEY PATH) stay env-only. The DB read is lazy to
+    #  avoid a config<->db import cycle.
+    # ------------------------------------------------------------------
+    def _s(self, db_key: str, env_default: str) -> str:
+        from . import db
+        try:
+            v = db.get_setting(db_key, None)
+        except Exception:
+            v = None
+        return v if v not in (None, "") else env_default
+
+    def _sb(self, db_key: str, env_default: bool) -> bool:
+        v = self._s(db_key, None)
+        return env_default if v is None else str(v).strip().lower() in _TRUE
+
+    def xpub(self) -> str:
+        return self._s("gateway_xpub", self.GATEWAY_XPUB)
+
+    def shared_address(self) -> str:
+        return self._s("shared_receive_address", self.SHARED_RECEIVE_ADDRESS)
+
+    def sweep_destination(self) -> str:
+        return self._s("sweep_destination", self.SWEEP_DESTINATION)
+
+    def ton_address(self) -> str:
+        return self._s("ton_address", self.TON_RECEIVE_ADDRESS)
+
+    def toncenter_key(self) -> str:
+        return self._s("toncenter_api_key", self.TONCENTER_API_KEY)
+
+    def auto_sweep(self) -> bool:
+        return self._sb("auto_sweep", self.AUTO_SWEEP_ENABLED)
+
+    def accept_usdc(self) -> bool:
+        return self._sb("accept_usdc", self.ACCEPT_USDC)
+
+    def enabled_methods(self) -> list[str]:
+        raw = self._s("enabled_methods", ",".join(self.ENABLED_METHODS))
+        return [m.strip() for m in str(raw).split(",") if m.strip()]
+
+    def binance_enabled(self) -> bool:
+        return self._sb("binance_enabled", self.BINANCE_ENABLED) and bool(self.BINANCE_API_KEY)
+
+    def is_configured(self) -> bool:
+        """True once a receiving wallet (xpub or shared address) is set — the wizard
+        uses this to show the setup prompt until it's done."""
+        return bool(self.xpub() or self.shared_address())
+
+    def summary(self) -> dict:
+        """Non-secret snapshot for /health, the admin UI, and logs."""
+        methods = self.enabled_methods()
         return {
-            "base_url": cls.BASE_URL,
-            "quote_currency": cls.QUOTE_CURRENCY,
-            "enabled_methods": cls.ENABLED_METHODS,
-            "accept_usdc": cls.ACCEPT_USDC,
-            "per_order_address_mode": bool(cls.GATEWAY_XPUB),
-            "amount_match_mode": bool(cls.SHARED_RECEIVE_ADDRESS),
-            "auto_sweep": cls.AUTO_SWEEP_ENABLED,
-            "sweep_destination_set": bool(cls.SWEEP_DESTINATION),
-            "binance_verify": cls.BINANCE_ENABLED and bool(cls.BINANCE_API_KEY),
-            "ton_enabled": "usdt_ton" in cls.ENABLED_METHODS and bool(cls.TON_RECEIVE_ADDRESS),
-            "min_confirmations": cls.MIN_CONFIRMATIONS,
-            "reservation_ttl_minutes": cls.RESERVATION_TTL_MINUTES,
+            "configured": self.is_configured(),
+            "base_url": self.BASE_URL,
+            "quote_currency": self.QUOTE_CURRENCY,
+            "enabled_methods": methods,
+            "accept_usdc": self.accept_usdc(),
+            "per_order_address_mode": bool(self.xpub()),
+            "amount_match_mode": bool(self.shared_address()) and not bool(self.xpub()),
+            "auto_sweep": self.auto_sweep(),
+            "sweep_destination_set": bool(self.sweep_destination()),
+            "sweep_key_present": bool(self.GATEWAY_SWEEP_KEY_PATH and __import__("os").path.exists(self.GATEWAY_SWEEP_KEY_PATH)),
+            "binance_verify": self.binance_enabled(),
+            "ton_enabled": "usdt_ton" in methods and bool(self.ton_address()),
+            "min_confirmations": self.MIN_CONFIRMATIONS,
+            "reservation_ttl_minutes": self.RESERVATION_TTL_MINUTES,
         }
 
 

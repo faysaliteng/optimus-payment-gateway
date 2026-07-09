@@ -35,7 +35,7 @@ def _rpcs(method: str) -> list[str]:
 def _watched_tokens(method: str) -> dict:
     cfg = CHAINS[method]
     toks = {"USDT": cfg["tokens"]["USDT"]}
-    if config.ACCEPT_USDC:
+    if config.accept_usdc():
         for k, v in cfg["tokens"].items():
             if k != "USDT":
                 toks[k] = v
@@ -62,7 +62,7 @@ def scan_evm(method: str, on_paid=None) -> dict:
     scan_to = min(confirmed_to, from_block + config.MAX_CATCHUP_BLOCKS - 1)
 
     # what to watch: per-order addresses (xpub mode) or the shared address (amount-match)
-    per_order = bool(config.GATEWAY_XPUB)
+    per_order = bool(config.xpub())
     if per_order:
         actives = db.active_order_addresses(method)
         to_addresses = sorted({a["pay_address"] for a in actives if a.get("pay_address")})
@@ -71,9 +71,10 @@ def scan_evm(method: str, on_paid=None) -> dict:
             db.set_setting(cursor_key, str(scan_to))
             return {"ok": True, "credited": 0}
     else:
-        if not config.SHARED_RECEIVE_ADDRESS:
+        shared = config.shared_address()
+        if not shared:
             return {"ok": False, "reason": "no_receiver"}
-        to_addresses = [config.SHARED_RECEIVE_ADDRESS]
+        to_addresses = [shared]
 
     divisor = cents_divisor(method)
     credited = 0
@@ -120,7 +121,7 @@ def scan_evm(method: str, on_paid=None) -> dict:
 
 
 def scan_ton(method: str = "usdt_ton", on_paid=None) -> dict:
-    transfers = ton.fetch_incoming(config.TON_RECEIVE_ADDRESS, config.TONCENTER_API_KEY)
+    transfers = ton.fetch_incoming(config.ton_address(), config.toncenter_key())
     divisor = cents_divisor(method)
     credited = 0
     for t in transfers:
@@ -137,7 +138,7 @@ def scan_ton(method: str = "usdt_ton", on_paid=None) -> dict:
 def scan_all(on_paid=None) -> dict:
     db.expire_orders()
     out = {}
-    for method in config.ENABLED_METHODS:
+    for method in config.enabled_methods():
         cfg = CHAINS.get(method)
         if not cfg:
             continue

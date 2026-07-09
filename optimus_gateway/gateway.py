@@ -45,20 +45,22 @@ def create_payment(method: str, amount: float, *, merchant_order_id=None,
     """Reserve a payment and return everything the payer needs."""
     if method not in CHAINS:
         raise ValueError(f"unknown method {method!r}")
-    if method not in config.ENABLED_METHODS:
+    if method not in config.enabled_methods():
         raise ValueError(f"method {method!r} is not enabled")
 
+    xpub = config.xpub()
+    shared = config.shared_address()
     pay_address = None
     address_index = None
     pay_memo = None
     amount_match = False
 
     if method == "usdt_ton":
-        pay_address = config.TON_RECEIVE_ADDRESS
+        pay_address = config.ton_address()
         if not pay_address:
-            raise RuntimeError("OPG_TON_ADDRESS not configured")
+            raise RuntimeError("TON receive address not configured (set it in Setup)")
         pay_memo = _new_memo()
-    elif is_evm(method) and config.GATEWAY_XPUB:
+    elif is_evm(method) and xpub:
         # per-order address (recommended): derive a fresh child of the watch-only xpub.
         # A single GLOBAL index across all EVM methods keeps every address unique, so
         # BSC/ETH/Polygon orders can never collide on the same address.
@@ -69,15 +71,15 @@ def create_payment(method: str, amount: float, *, merchant_order_id=None,
             conn.commit()
         finally:
             conn.close()
-        pay_address = hdwallet.address_from_xpub(config.GATEWAY_XPUB, address_index)
-    elif is_evm(method) and config.SHARED_RECEIVE_ADDRESS:
+        pay_address = hdwallet.address_from_xpub(xpub, address_index)
+    elif is_evm(method) and shared:
         # amount-match mode on a shared address
-        pay_address = config.SHARED_RECEIVE_ADDRESS
+        pay_address = shared
         amount_match = True
     else:
         raise RuntimeError(
-            "Configure OPG_GATEWAY_XPUB (per-order addresses, recommended) or "
-            "OPG_SHARED_RECEIVE_ADDRESS (amount-match) for EVM methods")
+            "No receiving wallet configured — open the Setup wizard and add your xpub "
+            "(recommended) or a shared receive address.")
 
     order = db.create_order(
         method, amount, merchant_order_id=merchant_order_id, notify_url=notify_url,

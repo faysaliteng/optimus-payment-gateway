@@ -68,6 +68,22 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
+### ⚡ Easiest path: the Setup Wizard (no config files)
+
+You don't have to touch `.env` at all. Set an admin password and open the **Setup
+Wizard** in your browser — it does the rest:
+
+```bash
+OPG_ADMIN_PASSWORD=yourpassword python -m admin.app     # http://localhost:8001/setup
+```
+
+In the wizard you either **paste your xpub** (it validates it live and shows your
+first addresses so you can confirm it's yours) or click **"Generate dedicated
+wallet"** (it creates one, saves the spend key server-side in a locked file, and shows
+your 12-word backup once). Then tick the networks you want, optionally set a cold
+wallet for auto-sweep, and hit **Save**. Changes apply **instantly, no restart**.
+That's the whole setup. Prefer files? The env-var route below works too:
+
 **Get a watch-only xpub** from any wallet (Trust Wallet, MetaMask, Ledger, …) — see
 [`docs/XPUB_GUIDE.md`](docs/XPUB_GUIDE.md) and the offline tool in
 [`tools/bip39-standalone.html`](tools/bip39-standalone.html). Put it in `.env`:

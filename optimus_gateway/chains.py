@@ -8,8 +8,10 @@ is never a floating-point rounding bug in money math:
 
     cents = raw_token_units // 10 ** (decimals - 2)
 
-All contracts/decimals/RPCs below are the exact values used by the production Optimus
-gateway that has settled real deposits on BSC, Ethereum and Polygon.
+The BSC, Ethereum, Polygon and TON entries are the exact values used by the production
+Optimus gateway that has settled real deposits. Arbitrum, Optimism, Base and Avalanche
+use the same keyless-getLogs machinery; their contracts were cross-verified against each
+chain's official explorer and Circle's published USDC address list.
 """
 from __future__ import annotations
 
@@ -21,7 +23,7 @@ TRANSFER_SELECTOR = "a9059cbb"
 BALANCEOF_SELECTOR = "70a08231"
 
 # --- Native gas coin per EVM chain ------------------------------------------
-NATIVE_COIN = {56: "BNB", 1: "ETH", 137: "POL"}
+NATIVE_COIN = {56: "BNB", 1: "ETH", 137: "POL", 42161: "ETH", 10: "ETH", 8453: "ETH", 43114: "AVAX"}
 
 
 # --- The registry -----------------------------------------------------------
@@ -96,6 +98,95 @@ CHAINS: dict[str, dict] = {
         "max_span": 20,
         "initial_lookback": 60,
         "explorer": "https://polygonscan.com/tx/",
+    },
+    "usdt_arbitrum": {
+        "label": "USDT/USDC (Arbitrum)",
+        "short": "Arbitrum",
+        "scanner": "evm",
+        "chain_id": 42161,
+        "decimals": 6,
+        "tokens": {
+            "USDT": "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9",
+            "USDC": "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+            "USDC.e": "0xff970a61a04b1ca14834a43f5de4533ebddb5cc8",
+        },
+        "rpcs": [
+            "https://arbitrum-one-rpc.publicnode.com",
+            "https://arb1.arbitrum.io/rpc",
+            "https://arbitrum.drpc.org",
+        ],
+        "rpc_setting": "arbitrum_gateway_rpc",
+        "cursor_key": "arbitrum_watch_last_block",
+        "max_span": 1000,
+        "initial_lookback": 1000,
+        "explorer": "https://arbiscan.io/tx/",
+    },
+    "usdt_optimism": {
+        "label": "USDT/USDC (Optimism)",
+        "short": "Optimism",
+        "scanner": "evm",
+        "chain_id": 10,
+        "decimals": 6,
+        "tokens": {
+            "USDT": "0x94b008aa00579c1307b0ef2c499ad98a8ce58e58",
+            "USDC": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+            "USDC.e": "0x7f5c764cbc14f9669b88837ca1490cca17c31607",
+        },
+        "rpcs": [
+            "https://optimism-rpc.publicnode.com",
+            "https://mainnet.optimism.io",
+            "https://optimism.drpc.org",
+        ],
+        "rpc_setting": "optimism_gateway_rpc",
+        "cursor_key": "optimism_watch_last_block",
+        "max_span": 1000,
+        "initial_lookback": 500,
+        "explorer": "https://optimistic.etherscan.io/tx/",
+    },
+    "usdt_base": {
+        "label": "USDT/USDC (Base)",
+        "short": "Base",
+        "scanner": "evm",
+        "chain_id": 8453,
+        "decimals": 6,
+        "tokens": {
+            "USDC": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+            "USDT": "0xfde4c96c8593536e31f229ea8f37b2ada2699bb2",
+            "USDbC": "0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca",
+        },
+        "rpcs": [
+            "https://base-rpc.publicnode.com",
+            "https://mainnet.base.org",
+            "https://base.drpc.org",
+        ],
+        "rpc_setting": "base_gateway_rpc",
+        "cursor_key": "base_watch_last_block",
+        "max_span": 1000,
+        "initial_lookback": 500,
+        "explorer": "https://basescan.org/tx/",
+    },
+    "usdt_avalanche": {
+        "label": "USDT/USDC (Avalanche C-Chain)",
+        "short": "Avalanche",
+        "scanner": "evm",
+        "chain_id": 43114,
+        "decimals": 6,
+        "tokens": {
+            "USDT": "0x9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7",
+            "USDC": "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e",
+            "USDT.e": "0xc7198437980c041c805a1edcba50c1ce5db95118",
+            "USDC.e": "0xa7d7079b0fead91f3e65f86e8915cb59c1a4c664",
+        },
+        "rpcs": [
+            "https://avalanche-c-chain-rpc.publicnode.com",
+            "https://api.avax.network/ext/bc/C/rpc",
+            "https://avalanche.drpc.org",
+        ],
+        "rpc_setting": "avalanche_gateway_rpc",
+        "cursor_key": "avalanche_watch_last_block",
+        "max_span": 2000,
+        "initial_lookback": 500,
+        "explorer": "https://snowtrace.io/tx/",
     },
     "usdt_ton": {
         "label": "USDT (TON)",

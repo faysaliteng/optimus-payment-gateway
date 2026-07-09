@@ -4,9 +4,9 @@
 
 **Accept crypto payments yourself — no processor, no middleman, no one holding your money.**
 
-USDT / USDC on **BSC (BEP20) · Ethereum · Polygon · TON**, with a click-through setup,
-automatic payment detection, automatic forwarding to your cold wallet, and
-wrong-network recovery. Point it at your wallet's **xpub** and it does the rest.
+USDT / USDC on **BSC · Ethereum · Polygon · Arbitrum · Optimism · Base · Avalanche · TON**
+— with a click-through setup, automatic payment detection, automatic forwarding to your
+cold wallet, and wrong-network recovery. Point it at your wallet's **xpub** and it does the rest.
 
 [![Tests](https://github.com/faysaliteng/optimus-payment-gateway/actions/workflows/tests.yml/badge.svg)](https://github.com/faysaliteng/optimus-payment-gateway/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -74,6 +74,39 @@ collected funds.)*
 > the wizard walks you through it. **Receiving + crediting buyers needs no gas at all.**
 
 ---
+
+## 🪙 Supported networks & tokens
+
+Accept **USDT and USDC** across **7 EVM chains + TON** — more networks than most
+popular gateways, all from a single watch-only xpub. Enable any subset (the Setup
+wizard shows them as checkboxes; or set `OPG_ENABLED_METHODS`).
+
+| Network | Chain ID | Tokens accepted | Gas coin | Auto-sweep | Notes |
+|---|---|---|---|---|---|
+| **BSC (BEP20)** | 56 | USDT · USDC | BNB | ✅ | ⭐ cheapest fees for buyers |
+| **Polygon** | 137 | USDT · USDC · USDC.e | POL | ✅ | ⭐ near-zero fees |
+| **Arbitrum** | 42161 | USDT · USDC · USDC.e | ETH | ✅ | L2, low fees, fast |
+| **Optimism** | 10 | USDT · USDC · USDC.e | ETH | ✅ | L2, low fees |
+| **Base** | 8453 | USDC · USDT · USDbC | ETH | ✅ | L2, fast-growing |
+| **Ethereum** | 1 | USDT · USDC | ETH | ✅ | maximum compatibility |
+| **Avalanche C-Chain** | 43114 | USDT · USDC · .e | AVAX | ✅ | fast finality |
+| **TON** | — | USDT (jetton) | TON | manual¹ | Telegram-native, memo-routed |
+
+<sub>All EVM tokens are the **official Circle-issued USDC** and **Tether USDT** contracts
+(6-decimal on L2s, 18-decimal on BSC), with popular **bridged** variants (USDC.e / USDbC /
+USDT.e) also watched so no payment is missed. Every contract address was cross-verified on
+the chain's official explorer — see [`docs/CHAINS.md`](docs/CHAINS.md). ¹TON uses a shared
+memo address, so funds already arrive in one wallet.</sub>
+
+**Because every EVM chain shares one address space, the same xpub serves all of them** —
+one setup covers BSC, Ethereum, Polygon, Arbitrum, Optimism, Base and Avalanche, and a
+buyer who pays on the "wrong" one is auto-recovered. Adding another EVM chain is a
+~5-line registry entry ([`docs/CHAINS.md`](docs/CHAINS.md)).
+
+> **Method keys** (for `OPG_ENABLED_METHODS` / the API `method` field): `usdt_bep20`,
+> `usdt_polygon`, `usdt_arbitrum`, `usdt_optimism`, `usdt_base`, `usdt_erc20`,
+> `usdt_avalanche`, `usdt_ton`. *(Tron/TRC-20 uses a non-EVM address format and isn't in
+> this build yet — it's on the roadmap.)*
 
 ## 📋 What you need before you start
 

@@ -25,11 +25,17 @@ from .config import config
 
 log = logging.getLogger("optimus_gateway.sweeper")
 
-# per-chain gas tuning (wei). ETH/Polygon token transfers are cheaper-gas than BSC's.
+# per-chain gas tuning (wei). Token-transfer gas LIMIT + a gas-price clamp band per
+# chain. Arbitrum reports inflated L2 gas units (priced very low), so its limit is high;
+# unused gas is refunded (the limit is a ceiling, you pay actual).
 GAS = {
-    56:  {"token": 90_000, "native": 21_000, "min": 1_000_000_000,  "max": 5_000_000_000},
-    1:   {"token": 70_000, "native": 21_000, "min": 100_000_000,    "max": 60_000_000_000},
-    137: {"token": 70_000, "native": 21_000, "min": 100_000_000,    "max": 600_000_000_000},
+    56:    {"token": 90_000,    "native": 21_000,    "min": 1_000_000_000,   "max": 5_000_000_000},    # BSC
+    1:     {"token": 70_000,    "native": 21_000,    "min": 100_000_000,     "max": 60_000_000_000},   # Ethereum
+    137:   {"token": 70_000,    "native": 21_000,    "min": 100_000_000,     "max": 600_000_000_000},  # Polygon
+    42161: {"token": 3_000_000, "native": 1_000_000, "min": 10_000_000,      "max": 20_000_000_000},   # Arbitrum
+    10:    {"token": 300_000,   "native": 40_000,    "min": 1_000_000,       "max": 20_000_000_000},   # Optimism
+    8453:  {"token": 300_000,   "native": 40_000,    "min": 1_000_000,       "max": 20_000_000_000},   # Base
+    43114: {"token": 200_000,   "native": 30_000,    "min": 1_000_000_000,   "max": 300_000_000_000},  # Avalanche
 }
 
 

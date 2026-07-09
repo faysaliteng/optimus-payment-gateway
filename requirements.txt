@@ -13,5 +13,8 @@ segno>=1.6.1
 # --- admin dashboard (optional) ---
 flask>=3.0.0
 
+# --- loads a local .env file (so `cp .env.example .env` works without Docker) ---
+python-dotenv>=1.0.0
+
 # Standard library covers the rest (sqlite3, urllib, hmac, hashlib). No Redis, no
 # MySQL, no node processes — one process, one SQLite file.

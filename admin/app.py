@@ -267,6 +267,26 @@ def setup_generate_wallet():
                     "key_path": config.GATEWAY_SWEEP_KEY_PATH})
 
 
+@app.route("/setup/gas")
+@requires_auth(as_json=True)
+def setup_gas():
+    """Live gas-tank balances per chain — so the wizard can tell the operator exactly
+    which address to fund (and with how much) to enable auto-sweep. No keys."""
+    try:
+        tanks = sweeper.gas_tank_status()  # {method: {address, native, symbol}}
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "error": str(exc)})
+    thr = config.GAS_ALERT_THRESHOLD
+    out = []
+    for m, t in tanks.items():
+        addr = t.get("address") or ""
+        native = float(t.get("native") or 0)
+        out.append({"method": m, "label": CHAINS.get(m, {}).get("label", m),
+                    "address": addr, "native": native, "symbol": t.get("symbol") or "",
+                    "low": bool(addr) and native < thr})
+    return jsonify({"ok": True, "tanks": out, "have_key": config.summary()["sweep_key_present"]})
+
+
 @app.route("/setup/save", methods=["POST"])
 @requires_auth
 def setup_save():

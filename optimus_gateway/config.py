@@ -14,6 +14,15 @@ from __future__ import annotations
 
 import os
 
+# Load a local .env file if present, so `cp .env.example .env` works for plain
+# `python run.py` / `python -m admin.app` runs (not just Docker). Optional dependency
+# — if python-dotenv isn't installed, real environment variables still work.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:  # noqa: BLE001
+    pass
+
 _TRUE = {"1", "true", "yes", "on", "y"}
 
 

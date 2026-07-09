@@ -105,6 +105,17 @@
       <label class="chk" style="display:inline-flex;margin-top:12px">
         <input type="checkbox" name="auto_sweep" {{ 'checked' if auto_sweep }}> Enable auto-sweep + wrong-network recovery</label>
 
+      <div class="box" style="margin-top:14px">
+        <div class="row" style="justify-content:space-between">
+          <b>⛽ Gas tanks — fund these to enable auto-sweep</b>
+          <button type="button" class="btn ghost" onclick="checkGas()">Check balances</button>
+        </div>
+        <p class="hint" style="margin:8px 0 0">The same address on every chain. Send a little native coin
+          (~$3–5 worth of BNB / ETH / POL) to each — that's the fuel the gateway uses to forward payments to your
+          cold wallet. Buyers are still credited even with an empty tank; the money just waits until there's gas.</p>
+        <div id="gasOut" style="margin-top:8px"></div>
+      </div>
+
       <div style="margin-top:22px"><button type="submit" class="btn">💾 Save &amp; go live</button></div>
     </form>
   </div>
@@ -136,6 +147,16 @@ async function genWallet(){
     +'<div class="box">✓ Saved. Your xpub is now set. <b>Gas tank</b> (fund with a little BNB/ETH/POL per chain):<br>'
     +'<span class="mono">'+d.gas_tank+'</span></div>';
   document.getElementById('xpub').value='••••••••  (dedicated wallet set)';
+}
+async function checkGas(){
+  const out=document.getElementById('gasOut');out.innerHTML='<span class=hint>Checking chains…</span>';
+  const r=await fetch('{{ url_for("setup_gas") }}');const d=await r.json();
+  if(!d.ok){out.innerHTML='<span class="err">'+(d.error||'error')+'</span>';return;}
+  if(!d.have_key){out.innerHTML='<span class="warn">Generate a dedicated wallet above first — a watch-only xpub has no gas tank to fund (you\'d sweep manually).</span>';return;}
+  let h='<table class="addrs">';
+  d.tanks.forEach(t=>{h+='<tr><td>'+t.label+'</td><td class="mono">'+(t.address||'—')+'</td><td>'+
+    (t.low?'<span class="warn">'+t.native.toFixed(4)+' '+t.symbol+' — top up</span>':'<span class="ok">'+t.native.toFixed(4)+' '+t.symbol+' ✓</span>')+'</td></tr>';});
+  out.innerHTML=h+'</table>';
 }
 </script>
 {% endblock %}

@@ -45,14 +45,27 @@ and (if you want) **automatically moves the money to a safe "cold" wallet** you 
 |---|---|
 | 🟢 Creates a **fresh address for every order** (from your xpub) | 🖐️ Paste your **xpub** (or click *Generate wallet*) |
 | 🟢 **Watches the blockchain** 24/7 for incoming payments | 🖐️ Tick which **networks** you accept |
-| 🟢 **Confirms & credits** each payment (no double-counting) | 🖐️ *(optional)* Put a little **gas** in the gas tank |
-| 🟢 Sends your app a **signed "paid" webhook** | 🖐️ *(optional)* Set your **cold wallet** address |
-| 🟢 **Auto-forwards** funds to your cold wallet ("auto-sweep") | |
+| 🟢 **Confirms & credits** each payment (no double-counting) | 🖐️ Set your **cold wallet** (where funds collect) |
+| 🟢 Sends your app a **signed "paid" webhook** | 🖐️ Put a little **gas** in the gas tank |
+| 🟢 **Auto-collects** every payment into your one cold wallet ("auto-sweep") | 🖐️ Flip **auto-sweep** on |
 | 🟢 **Recovers wrong-network** payments (paid on ETH by mistake, etc.) | |
 
-**So yes — to just *receive* money and get "paid" alerts, you literally only add an
-xpub.** To also *auto-forward* everything to cold storage, you additionally fund the
-gas tank and flip one switch. More on that below — it's easy.
+### 💰 Getting all payments into ONE wallet
+Because each order is paid to its **own** address (that's what keeps things private and
+easy to reconcile), the gateway has to *forward* them to collect everything in one place —
+and **moving crypto always costs a little gas.** So to auto-collect into a single wallet:
+
+1. Set your **cold wallet** as the destination, 2) put a few dollars of **BNB/ETH/POL** in
+the gas tank, 3) turn on **auto-sweep**. Then every payment lands in your one wallet
+automatically. **This is required for one-wallet collection** — not a nice-to-have.
+
+**Don't want to deal with gas at all?** Use **one shared receiving address** instead of
+per-order addresses (set your own wallet as the receiver in Setup → *Advanced*). Then
+every payment goes **straight to that one wallet** with **no gas and no sweeping** — the
+trade-off is that one address is reused/public and buyers pay an exact unique amount.
+
+*(Receiving + crediting buyers needs no gas either way — gas is only for moving the
+collected funds.)*
 
 > 💡 **The one honest catch:** the gateway **can't create gas out of thin air.** Moving
 > crypto costs a tiny network fee ("gas"), paid in the chain's coin (BNB on BSC, ETH on
@@ -146,8 +159,9 @@ cheapest fees for buyers). Optionally tick **"Also accept USDC."** Hit **Save**.
 > defaults work, but the official `bsc-dataseed` nodes **don't** — if BSC payments
 > aren't detected, set a working RPC (see [Troubleshooting](#️-troubleshooting)).
 
-### Step 5 — *(Optional)* Turn on auto-forward to cold storage
-If you want every payment automatically pushed to a safe wallet:
+### Step 5 — Collect all payments into one wallet (auto-sweep)
+Each order is paid to its own address, so to gather **everything into your single cold
+wallet** automatically (required for one-wallet collection), turn on auto-sweep:
 1. Make sure you used **Option B** (or otherwise have a dedicated wallet) so the server
    can sign the transfers.
 2. Enter your **cold wallet address** ("sweep destination").

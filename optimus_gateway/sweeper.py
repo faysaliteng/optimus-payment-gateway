@@ -29,9 +29,14 @@ log = logging.getLogger("optimus_gateway.sweeper")
 # chain. Arbitrum reports inflated L2 gas units (priced very low), so its limit is high;
 # unused gas is refunded (the limit is a ceiling, you pay actual).
 GAS = {
+    # `token` is the gas LIMIT for a stablecoin sweep. It must exceed the transfer's real
+    # gas use INCLUDING a cold-storage write (~20k extra) to a destination that holds none
+    # of that token yet. USDT on Polygon/Ethereum can reach ~85-95k in that case, so a bare
+    # 70k limit ran OUT OF GAS and the sweep reverted. 120k gives headroom — unused gas is
+    # refunded (you only pay for gas actually used), so a generous limit is free insurance.
     56:    {"token": 90_000,    "native": 21_000,    "min": 1_000_000_000,   "max": 5_000_000_000},    # BSC
-    1:     {"token": 70_000,    "native": 21_000,    "min": 100_000_000,     "max": 60_000_000_000},   # Ethereum
-    137:   {"token": 70_000,    "native": 21_000,    "min": 100_000_000,     "max": 600_000_000_000},  # Polygon
+    1:     {"token": 120_000,   "native": 21_000,    "min": 100_000_000,     "max": 60_000_000_000},   # Ethereum
+    137:   {"token": 120_000,   "native": 21_000,    "min": 100_000_000,     "max": 600_000_000_000},  # Polygon
     42161: {"token": 3_000_000, "native": 1_000_000, "min": 10_000_000,      "max": 20_000_000_000},   # Arbitrum
     10:    {"token": 300_000,   "native": 40_000,    "min": 1_000_000,       "max": 20_000_000_000},   # Optimism
     8453:  {"token": 300_000,   "native": 40_000,    "min": 1_000_000,       "max": 20_000_000_000},   # Base
@@ -95,11 +100,17 @@ def _gas_up_and_sweep(method, xprv, index, addr, balances, dest, gp, tank_priv, 
     eps = _rpcs(method)
     cid = chain_id(method)
     g = GAS[cid]
+    # BUFFER the gas price 1.6x (capped at the chain's max). Volatile chains — Polygon
+    # especially, whose gas can spike 3-10x its baseline — will underprice a sweep quoted
+    # at the bare spot rate by the time it mines, so it never lands and the funds keep
+    # resting (re-swept every pass). Overpaying gas a little is far cheaper than a stuck
+    # sweep. Both the gas-need math and the actual txs use this buffered price.
+    gp = min(int(gp * 1.6), g["max"])
     need = len(balances) * g["token"] * gp
     if evm.native_balance(eps, addr) < need:
         if not tank_priv:
             return [], tank_nonce, "no_gas_tank"
-        topup = int(need * 1.3)
+        topup = int(need * 1.5)  # was 1.3 — extra headroom so a gas tick up can't underfund the sweep
         if evm.native_balance(eps, tank_addr) < topup + g["native"] * gp:
             return [], tank_nonce, "gas_tank_low"
         if not evm.send_native(eps, tank_priv, addr, topup, gp, tank_nonce, cid, g["native"]):
@@ -170,7 +181,20 @@ def recover_wrongnet(credit: bool = True) -> dict:
                 continue
             sent, tank_nonce, st = _gas_up_and_sweep(
                 method, xprv, int(idx), addr, bals, dest, gp, tank_priv, tank_addr, tank_nonce)
-            swept.extend(sent)
+            if not sent:
+                continue
+            # CONFIRM each sweep actually LANDED before reporting it. A returned txid only
+            # means the tx was broadcast — gas volatility can leave it pending or revert it,
+            # so the funds never move. Re-read the token balance after a short wait; only
+            # count a token as swept once its balance has actually dropped. An unconfirmed
+            # one is simply retried on the next pass (idempotent), and callers/notifications
+            # are never told funds "moved" when they didn't.
+            time.sleep(12)
+            tokens_map = CHAINS[method]["tokens"]
+            for s in sent:
+                contract = tokens_map.get(s["token"])
+                if contract is None or evm.token_balance(eps, contract, addr) <= 10_000:
+                    swept.append(s)
     return {"status": "ok", "swept": swept, "scanned": len(rows)}
 
 

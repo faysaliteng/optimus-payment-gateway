@@ -42,28 +42,37 @@ attribution rules below guarantee.
 
 ## 3. Rotation rules — when an address may be re-handed out
 
-The pool allocator (`_next_..._pool_index`) picks, within `1..N`, the **least-recently-used
-reissuable** index. An index is **reissuable** only when **both** hold:
+The pool allocator (`_next_..._pool_index`) picks, within `1..N`, the **fullest reissuable**
+index — the reissuable address holding the most un-swept balance, i.e. the one **closest to
+the sweep threshold**, so it reaches the threshold and sweeps **soonest** (concentrating
+coins onto a few addresses instead of spreading them thin), tie-broken by least-recently-used.
+An index is **reissuable** only when **both** hold:
 
 1. **No open order.** It has **no `pending` order that is still within its reservation
    window** (`reservation_expires_at`). An address with any live, unexpired order is
    **LOCKED** and will not be handed to anyone else.
-2. **Cooldown fully elapsed.** Its most recent activity (`last_partial_at`, else
-   `created_at`) is **older than the reissue cooldown**, so no valid payment for a prior
-   occupant can still arrive.
+2. **No un-collected payment can still arrive for a prior occupant** — and whether that's
+   true depends on whether the prior order was *paid*:
+   - A **fully-paid** order's funds are already confirmed on-chain and nothing more is
+     expected → the address is reusable **IMMEDIATELY**, with no cooldown wait.
+   - An **unpaid / partial / expired** order could still receive a legitimate late payment →
+     the address is **held until the reuse cooldown elapses** (≥ the late-payment window),
+     so no stray payment for the old order can land on the next buyer.
 
-Selection among reissuable indices is **LRU** (oldest last-activity first), which spreads
-wear and maximises the accumulation window. **If nothing is reissuable, the allocator mints
-the next new index** (grows the pool) — a buyer is never blocked; the reuse benefit simply
-resumes as addresses free up.
+**If nothing is reissuable, the allocator mints the next new index** (grows the pool) — a
+buyer is never blocked; the reuse benefit resumes as addresses free up.
 
-### The cooldown must cover the late-payment window
+This "**paid → reuse now, unpaid → wait the cooldown**" rule lets an address reach the sweep
+threshold as fast as is *safe*: a buyer who pays promptly frees the address instantly, while
+the cooldown only ever holds the genuinely-risky un-paid addresses.
+
+### The cooldown only holds UN-PAID addresses
 
 The reissue cooldown (`pool_reuse_cooldown_minutes`) is clamped to be **≥ the amount/late
 window** (`AMOUNT_COOLDOWN_MINUTES`, the 24h window a slow buyer can still pay in) and
-defaults to **48h** for extra margin. This is the load-bearing invariant: an address is
-released to a new buyer **only after the previous occupant's entire late-payment window has
-closed**, so "current buyer" and "in-window prior buyer" can never overlap on one address.
+defaults to **48h**. It applies **only** to addresses whose order was *not* fully paid — the
+only case where a legit payment could still be in flight. A paid address ignores it entirely,
+because its money has already arrived and confirmed; nothing more is coming.
 
 ### Pending-scoped unique index — the concurrency backstop
 
@@ -107,7 +116,7 @@ a txid resolves to **exactly one** buyer. With reuse OFF this collapses to the o
 |---|---|---|
 | `pool_enabled` / `OPG_POOL_ENABLED` | `false` | Master switch. Off → original never-reuse monotonic allocator (unchanged behaviour). |
 | `pool_size` / `OPG_POOL_SIZE` | `30` | `N`, the pool's index range `1..N` and its concurrency floor. The pool grows past `N` on demand and shrinks back to reuse as addresses free. |
-| `pool_reuse_cooldown_minutes` / `OPG_POOL_REUSE_COOLDOWN_MINUTES` | `2880` (48h) | How long after last activity before an index is reissuable. **Clamped to ≥ `AMOUNT_COOLDOWN_MINUTES`** (24h) — the invariant that makes reuse safe. |
+| `pool_reuse_cooldown_minutes` / `OPG_POOL_REUSE_COOLDOWN_MINUTES` | `2880` (48h) | How long an **un-paid** address is held before it can be reissued. A **fully-paid** address is reusable immediately and ignores this. **Clamped to ≥ `AMOUNT_COOLDOWN_MINUTES`** (24h) — the late-payment window that makes reuse safe. |
 | `sweep_min_usd_<method>` / per-chain sweep $ threshold | per deployment | Don't sweep an address until its accumulated balance crosses this dollar value — this is what turns many small deposits into one gas-efficient sweep. |
 
 Turn it on for a low-fee, high-small-order chain (BEP20) and leave it off for chains where

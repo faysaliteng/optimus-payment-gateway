@@ -337,9 +337,11 @@ than it's worth. Two features fix that:
   [`docs/LITECOIN.md`](docs/LITECOIN.md).
 - **Accumulating address pool** (EVM, opt-in) — reuse a small pool of addresses so many
   buyers' small payments **pile up on one address** and sweep **once** at a `$` threshold,
-  amortizing gas. An address is locked while it has a pending order and only recycled after
-  a safety cooldown, with attribution scoped to the open buyer. Off by default; enable with
-  `pool_enabled=true`. Full design + safety notes: [`docs/ADDRESS_POOL.md`](docs/ADDRESS_POOL.md).
+  amortizing gas. A **fully-paid** address is reused immediately (its funds are already
+  confirmed) — filling the *fullest* address toward the threshold first, so it sweeps sooner;
+  an address is locked while its order is pending, and only *un-paid* ones wait a safety
+  cooldown. Attribution is always scoped to the open buyer. Off by default (`pool_enabled=true`).
+  Full design + safety notes: [`docs/ADDRESS_POOL.md`](docs/ADDRESS_POOL.md).
 
 ## 🔐 Watch-only vs. dedicated wallet (your safety choice)
 

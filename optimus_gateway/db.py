@@ -202,11 +202,15 @@ def pool_reuse_cooldown_minutes() -> int:
 
 def next_evm_address_index(conn: sqlite3.Connection) -> int:
     """Allocate a per-order EVM HD index (single global space). Pool OFF -> the next
-    never-reused monotonic index. Pool ON -> the FULLEST REISSUABLE index in 1..N: among
-    addresses with NO open order AND past the reuse cooldown, pick the one holding the MOST
-    un-swept balance (closest to the sweep threshold) so it reaches the threshold and sweeps
-    SOONEST — concentrating coins instead of spreading them thin — tie-broken by LRU. If none
-    is free, MINT a new index (grows the pool; a caller is never blocked). Open a txn first."""
+    never-reused monotonic index. Pool ON -> the FULLEST REISSUABLE index in 1..N.
+
+    REISSUABLE = no active OPEN order AND the address cannot still receive a legit payment
+    for a prior occupant: a PAID (fully-covered) order expects nothing more, so a paid
+    address is reusable IMMEDIATELY (funds already confirmed on it); an unpaid/partial/expired
+    order could still get a late payment, so its address is held until past the reuse cooldown
+    (>= the late-payment window). Among reissuable indices, pick the one holding the MOST
+    un-swept balance (closest to the sweep threshold) so it sweeps SOONEST, tie-broken by LRU.
+    If none is free, MINT a new index (grows the pool; a caller is never blocked). Open a txn first."""
     if not pool_enabled():
         return next_address_index(conn, _EVM_COUNTER)
     n = pool_size()
@@ -217,10 +221,20 @@ def next_evm_address_index(conn: sqlite3.Connection) -> int:
         FROM orders
         WHERE address_index IS NOT NULL AND address_index BETWEEN 1 AND ?
         GROUP BY address_index
-        HAVING SUM(CASE WHEN status='pending'
+        HAVING SUM(CASE
+                     -- an active OPEN order always locks the address
+                     WHEN status='pending'
                           AND (reservation_expires_at IS NULL OR reservation_expires_at > datetime('now'))
-                        THEN 1 ELSE 0 END) = 0
-           AND datetime(MAX(COALESCE(last_activity_at, created_at)), '+' || ? || ' minutes') < datetime('now')
+                       THEN 1
+                     -- an order that is NOT fully paid could still get a legit late payment within
+                     -- the cooldown window -> hold the address until then. A PAID order expects
+                     -- nothing more -> never blocks, so a paid address is reusable IMMEDIATELY
+                     -- (the funds are already confirmed on-chain).
+                     WHEN status <> 'paid'
+                          AND datetime(COALESCE(last_activity_at, created_at), '+' || ? || ' minutes') >= datetime('now')
+                       THEN 1
+                     ELSE 0
+                   END) = 0
         ORDER BY SUM(CASE WHEN swept_at IS NULL THEN COALESCE(received_cents,0) ELSE 0 END) DESC,
                  MAX(COALESCE(last_activity_at, created_at)) ASC
         LIMIT 1

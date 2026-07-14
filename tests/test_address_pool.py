@@ -66,6 +66,34 @@ def test_open_order_locks_the_address_from_reuse(pool_db):
     assert b["address_index"] != a["address_index"]       # pending address never handed out
 
 
+def test_paid_address_is_reusable_immediately_no_cooldown(pool_db):
+    """A FULLY-PAID address has no pending legit payment, so it is reusable IMMEDIATELY —
+    the cooldown only holds UNPAID addresses (where a late payment could still land)."""
+    db.set_setting("pool_enabled", "true")
+    db.set_setting("pool_size", "1")
+    db.set_setting("pool_reuse_cooldown_minutes", "2880")     # 48h — paid must ignore it
+    a = db.create_addressed_order("usdt_bep20", 5.0, DERIVE, merchant_order_id="A")
+    db.credit_by_address("usdt_bep20", a["pay_address"], 500, "0x" + "aa" * 32)  # pay in full -> 'paid'
+    b = db.create_addressed_order("usdt_bep20", 3.0, DERIVE, merchant_order_id="B")  # no aging!
+    assert b["address_index"] == a["address_index"]           # reused right away (paid)
+
+
+def test_unpaid_expired_address_waits_for_cooldown(pool_db):
+    """An UNPAID/expired address could still receive a late payment, so it is held until the
+    cooldown elapses — NOT reused immediately."""
+    db.set_setting("pool_enabled", "true")
+    db.set_setting("pool_size", "1")
+    db.set_setting("pool_reuse_cooldown_minutes", "2880")
+    a = db.create_addressed_order("usdt_bep20", 5.0, DERIVE, merchant_order_id="A")
+    conn = db.connect()                                       # expire it UNPAID + recent
+    conn.execute("UPDATE orders SET status='expired', created_at=datetime('now','-10 minutes'), "
+                 "last_activity_at=datetime('now','-10 minutes'), reservation_expires_at=datetime('now','-10 minutes') "
+                 "WHERE id=?", (a["id"],))
+    conn.commit()
+    b = db.create_addressed_order("usdt_bep20", 3.0, DERIVE, merchant_order_id="B")
+    assert b["address_index"] != a["address_index"]           # unpaid + recent -> held, new index minted
+
+
 def test_reused_address_credits_the_open_buyer_not_a_prior_one(pool_db):
     """THE money-safety case: two buyers ever share an address; a payment must credit the
     CURRENT open order, never the previous occupant."""

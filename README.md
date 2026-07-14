@@ -4,9 +4,10 @@
 
 **Accept crypto payments yourself — no processor, no middleman, no one holding your money.**
 
-USDT / USDC on **BSC · Ethereum · Polygon · Arbitrum · Optimism · Base · Avalanche · TON**
-— with a click-through setup, automatic payment detection, automatic forwarding to your
-cold wallet, and wrong-network recovery. Point it at your wallet's **xpub** and it does the rest.
+USDT / USDC on **BSC · Ethereum · Polygon · Arbitrum · Optimism · Base · Avalanche · TON**,
+plus native **Litecoin (LTC)** — with a click-through setup, automatic payment detection,
+automatic forwarding to your cold wallet, and wrong-network recovery. Point it at your
+wallet's **xpub** and it does the rest.
 
 [![Tests](https://github.com/faysaliteng/optimus-payment-gateway/actions/workflows/tests.yml/badge.svg)](https://github.com/faysaliteng/optimus-payment-gateway/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -32,7 +33,7 @@ cold wallet, and wrong-network recovery. Point it at your wallet's **xpub** and 
 Think of **Stripe or PayPal**, but for crypto — **except you keep 100% of the money
 and there's no company in the middle.** You run a small program on a server (or your
 PC). When someone owes you money, your app asks this gateway for a payment; the gateway
-gives the buyer a wallet address to send USDT/USDC to. The moment the payment lands on
+gives the buyer a wallet address to send USDT/USDC (or Litecoin) to. The moment the payment lands on
 the blockchain, the gateway **notices it, confirms it, and tells your app "paid!"** —
 and (if you want) **automatically moves the money to a safe "cold" wallet** you control.
 

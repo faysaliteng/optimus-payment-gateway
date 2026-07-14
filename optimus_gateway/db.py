@@ -42,7 +42,9 @@ CREATE TABLE IF NOT EXISTS orders (
     redirect_url TEXT,
     metadata TEXT,                      -- opaque merchant JSON
     tx_hashes TEXT DEFAULT '',          -- CSV of on-chain txids seen
-    swept_at TEXT,
+    swept_at TEXT,                      -- stamped when the address was swept to cold
+    sweep_txid TEXT,                    -- the forward txid that swept this address
+    last_activity_at TEXT,              -- last credit to this order's address (pool LRU)
     reservation_expires_at TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     paid_at TEXT
@@ -51,6 +53,14 @@ CREATE INDEX IF NOT EXISTS idx_orders_method_status ON orders(method, status);
 CREATE INDEX IF NOT EXISTS idx_orders_amount ON orders(method, expected_cents, status);
 CREATE INDEX IF NOT EXISTS idx_orders_address ON orders(pay_address);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_merchant ON orders(merchant_order_id) WHERE merchant_order_id IS NOT NULL;
+-- Accumulating-pool backstop: AT MOST ONE OPEN (pending) order may hold a per-order
+-- address at a time. Scoped to addressed orders (address_index NOT NULL) so it never
+-- constrains the shared address used by amount-match / TON mode (many pending there).
+-- Replaces the old unconditional UNIQUE(address_index): a reissued index is reused only
+-- AFTER its prior order closes, so the two never collide, and a concurrent double-alloc
+-- raises IntegrityError -> the allocator retries a different index.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_open_address ON orders(address_index)
+    WHERE status='pending' AND address_index IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS payment_reference_registry (
     normalized_reference TEXT PRIMARY KEY,
@@ -82,6 +92,17 @@ CREATE TABLE IF NOT EXISTS webhook_queue (
     created_at TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_webhook_pending ON webhook_queue(status, next_attempt_at);
+
+CREATE TABLE IF NOT EXISTS sweep_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    method TEXT,                        -- the chain the forward went out on
+    txid TEXT,                          -- forward tx hash (per-order address -> main/cold)
+    amount_cents INTEGER,               -- USD value forwarded, in cents
+    from_address TEXT,                  -- the per-order (hot) address swept
+    to_address TEXT,                    -- the cold / main destination
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sweep_log_txid ON sweep_log(method, txid);
 """
 
 
@@ -98,9 +119,21 @@ def init_db() -> None:
     conn = connect()
     try:
         conn.executescript(_SCHEMA)
+        _migrate(conn)
         conn.commit()
     finally:
         conn.close()
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Additive, idempotent migrations for DBs created before a column existed. New
+    tables/indexes come from `_SCHEMA` (all IF NOT EXISTS), but SQLite has no
+    ADD COLUMN IF NOT EXISTS, so columns are added guarded by a table-info probe."""
+    have = {r["name"] for r in conn.execute("PRAGMA table_info(orders)").fetchall()}
+    for col, decl in (("sweep_txid", "TEXT"),
+                      ("last_activity_at", "TEXT")):
+        if col not in have:
+            conn.execute("ALTER TABLE orders ADD COLUMN %s %s" % (col, decl))
 
 
 # --- settings / cursors -----------------------------------------------------
@@ -125,12 +158,144 @@ def set_setting(key: str, value: str) -> None:
 
 
 # --- HD address allocation --------------------------------------------------
+_TRUE = {"1", "true", "yes", "on", "y"}
+_EVM_COUNTER = "_evm"  # single GLOBAL EVM index space (keeps every EVM address unique)
+
+
 def next_address_index(conn: sqlite3.Connection, method: str) -> int:
     conn.execute("INSERT OR IGNORE INTO address_counter(method,next_index) VALUES(?,1)", (method,))
     row = conn.execute("SELECT next_index FROM address_counter WHERE method=?", (method,)).fetchone()
     idx = int(row["next_index"])
     conn.execute("UPDATE address_counter SET next_index=? WHERE method=?", (idx + 1, method))
     return idx
+
+
+# --- Accumulating address pool (gas-saving reuse) ---------------------------
+# OFF by default. When off, per-order addresses are minted monotonically (never reused),
+# which is byte-for-byte the original behavior. When on, a small pool of addresses is
+# reissued LRU-style once every prior order on an address has fully closed AND cooled
+# down past the late-payment window — so small payments pile up on-chain and one sweep
+# collects several orders' funds, saving gas. The two-tier attribution in
+# credit_by_address is what keeps reuse money-safe (see that function).
+def pool_enabled() -> bool:
+    return get_setting("pool_enabled", "false").strip().lower() in _TRUE
+
+
+def pool_size() -> int:
+    try:
+        return max(1, int(get_setting("pool_size", "30") or 30))
+    except (TypeError, ValueError):
+        return 30
+
+
+def pool_reuse_cooldown_minutes() -> int:
+    """An address is only re-handed to a NEW order once every prior order's late-payment
+    window has fully closed. Floored at config.AMOUNT_COOLDOWN_MINUTES (the window the
+    watcher still credits into); defaults to 48h for extra margin so a stale/stuck
+    payment can never land on a new occupant."""
+    try:
+        v = int(get_setting("pool_reuse_cooldown_minutes", "2880") or 2880)
+    except (TypeError, ValueError):
+        v = 2880
+    return max(int(config.AMOUNT_COOLDOWN_MINUTES), v)
+
+
+def next_evm_address_index(conn: sqlite3.Connection) -> int:
+    """Allocate a per-order EVM HD index (single global space). Pool OFF -> the next
+    never-reused monotonic index. Pool ON -> the LRU REISSUABLE index in 1..N (an
+    address with NO open order AND whose last activity is fully past the reuse
+    cooldown); if none is free, MINT a new index (grows the pool — a caller is never
+    blocked; the pool self-sizes to peak concurrency). Call inside an open transaction."""
+    if not pool_enabled():
+        return next_address_index(conn, _EVM_COUNTER)
+    n = pool_size()
+    cooldown = pool_reuse_cooldown_minutes()
+    row = conn.execute(
+        """
+        SELECT address_index
+        FROM orders
+        WHERE address_index IS NOT NULL AND address_index BETWEEN 1 AND ?
+        GROUP BY address_index
+        HAVING SUM(CASE WHEN status='pending'
+                          AND (reservation_expires_at IS NULL OR reservation_expires_at > datetime('now'))
+                        THEN 1 ELSE 0 END) = 0
+           AND datetime(MAX(COALESCE(last_activity_at, created_at)), '+' || ? || ' minutes') < datetime('now')
+        ORDER BY MAX(COALESCE(last_activity_at, created_at)) ASC
+        LIMIT 1
+        """,
+        (n, cooldown)).fetchone()
+    if row and row["address_index"] is not None:
+        return int(row["address_index"])
+    # Nothing reissuable -> mint the next new index (grows the pool; never blocks).
+    return next_address_index(conn, _EVM_COUNTER)
+
+
+def create_addressed_order(method: str, quote_amount: float, derive_address,
+                           *, merchant_order_id=None, notify_url=None, redirect_url=None,
+                           metadata=None, ttl_minutes=None, max_index_tries=25) -> dict:
+    """Reserve a PER-ORDER EVM address order with the reusable pool. `derive_address(index)
+    -> str` turns an HD index into its address; the caller supplies it so this layer stays
+    crypto-free (gateway.py passes the xpub derivation). Allocates a pool index (reused or
+    fresh), flips any stale pending-but-EXPIRED row occupying a reissued index to 'expired'
+    so the at-most-one-open-order backstop can't falsely block it, then inserts — retrying a
+    DIFFERENT index if the partial-unique backstop trips under concurrency. expected_cents is
+    the EXACT amount (attribution is by address; any amount accumulates until covered).
+    Returns the stored order dict (or an existing one on merchant_order_id idempotency)."""
+    import secrets
+    ttl = int(ttl_minutes or config.RESERVATION_TTL_MINUTES)
+    base_cents = int(round(float(quote_amount) * 100))
+    if base_cents <= 0:
+        raise ValueError("amount must be > 0")
+    conn = connect()
+    try:
+        if merchant_order_id:
+            dup = conn.execute("SELECT * FROM orders WHERE merchant_order_id=?",
+                               (merchant_order_id,)).fetchone()
+            if dup:
+                return dict(dup)
+        for _ in range(max(1, int(max_index_tries))):
+            trade_id = secrets.token_urlsafe(18)
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                # re-check the merchant idempotency key under the lock (concurrent create)
+                if merchant_order_id:
+                    dup = conn.execute("SELECT * FROM orders WHERE merchant_order_id=?",
+                                       (merchant_order_id,)).fetchone()
+                    if dup:
+                        conn.rollback()
+                        return dict(dup)
+                idx = next_evm_address_index(conn)
+                addr = derive_address(idx)
+                if not addr:
+                    conn.rollback()
+                    raise RuntimeError("address derivation returned empty")
+                # Reuse safety: a reissued index may still carry a pending-but-EXPIRED row
+                # (past TTL, not yet swept up by expire_orders). Flip it so the partial-
+                # unique-on-pending backstop doesn't falsely block this new order.
+                conn.execute(
+                    "UPDATE orders SET status=? WHERE address_index=? AND status=? "
+                    "AND reservation_expires_at IS NOT NULL "
+                    "AND reservation_expires_at <= datetime('now')",
+                    (STATUS_EXPIRED, idx, STATUS_PENDING))
+                cur = conn.execute(
+                    "INSERT INTO orders(trade_id, merchant_order_id, method, quote_amount,"
+                    " quote_currency, expected_cents, address_index, pay_address, notify_url,"
+                    " redirect_url, metadata, reservation_expires_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?, datetime('now', ?))",
+                    (trade_id, merchant_order_id, method, float(quote_amount), config.QUOTE_CURRENCY,
+                     base_cents, idx, addr, notify_url, redirect_url,
+                     json.dumps(metadata) if metadata else None, "+%d minutes" % ttl))
+                oid = cur.lastrowid
+                conn.commit()
+                return dict(conn.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone())
+            except sqlite3.IntegrityError:
+                # the open-address backstop tripped (another worker took this index) —
+                # roll back and try a different index
+                conn.rollback()
+                continue
+        raise RuntimeError("could not allocate a free gateway address (pool exhausted?)")
+    finally:
+        conn.close()
 
 
 # --- reservation ------------------------------------------------------------
@@ -229,7 +394,9 @@ def _apply_credit(conn: sqlite3.Connection, order: sqlite3.Row, cents: int, txid
     tx_hashes = (order["tx_hashes"] or "")
     if txid and txid not in tx_hashes:
         tx_hashes = (tx_hashes + "," + txid).strip(",")
-    conn.execute("UPDATE orders SET received_cents=?, tx_hashes=? WHERE id=?",
+    # stamp last_activity_at so the pool LRU allocator can tell when this address last
+    # saw money (a reissued address must be idle past the reuse cooldown).
+    conn.execute("UPDATE orders SET received_cents=?, tx_hashes=?, last_activity_at=datetime('now') WHERE id=?",
                  (new_total, tx_hashes, oid))
     expected = int(order["expected_cents"] or 0)
     # still creditable? pending and (not expired OR inside the late cooldown)
@@ -255,9 +422,24 @@ def credit_by_address(reference_type: str, to_address: str, cents: int, txid: st
     conn = connect()
     try:
         conn.execute("BEGIN IMMEDIATE")
+        # TWO-TIER attribution — the money-safety change that makes the accumulating pool
+        # (address reuse) correct. A payment credits the SINGLE currently-OPEN order on the
+        # address (Tier 1: addressed, pending, not past its reservation), else the newest
+        # prior occupant (Tier 2 = the original "newest row" rule — a late payment / top-up).
+        # Pool reuse is gated so an address is only re-handed to a new order AFTER the prior
+        # one's full late-payment window elapses, which makes Tier 1 (current) and Tier 2
+        # (in-window prior) mutually exclusive -> a txid resolves to exactly one order. With
+        # reuse OFF (one row per address) this is byte-for-byte the old behavior.
         order = conn.execute(
-            "SELECT * FROM orders WHERE lower(pay_address)=lower(?) ORDER BY id DESC LIMIT 1",
+            "SELECT * FROM orders WHERE lower(pay_address)=lower(?) AND address_index IS NOT NULL "
+            "AND status='pending' AND (reservation_expires_at IS NULL OR reservation_expires_at > datetime('now')) "
+            "ORDER BY id DESC LIMIT 1",
             (to_address,)).fetchone()
+        if not order:
+            order = conn.execute(
+                "SELECT * FROM orders WHERE lower(pay_address)=lower(?) AND address_index IS NOT NULL "
+                "ORDER BY id DESC LIMIT 1",
+                (to_address,)).fetchone()
         if not order:
             conn.rollback()
             return {"status": "no_order", "address": to_address}
@@ -279,6 +461,85 @@ def all_evm_order_addresses() -> list[dict]:
             "WHERE address_index IS NOT NULL AND pay_address IS NOT NULL "
             "GROUP BY lower(pay_address) ORDER BY address_index DESC").fetchall()
         return [{"address_index": r["address_index"], "pay_address": r["pay_address"]} for r in rows]
+    finally:
+        conn.close()
+
+
+def sweepable_order_addresses(method: str = None) -> list[dict]:
+    """Per-order ADDRESSES that have received funds and are not yet swept, DE-DUPLICATED to
+    ONE row per address (GROUP BY lower(pay_address)). With the accumulating pool an address
+    holds several orders' coins and the sweep is per-address (one on-chain balance), so the
+    sweeper must process each address once, not once per order row. With reuse off this is
+    one-row-per-address anyway, so the grouping is a no-op. Pass `method` to scope to a
+    single chain, or leave None for every EVM per-order address."""
+    conn = connect()
+    try:
+        if method:
+            rows = conn.execute(
+                "SELECT MIN(id) AS id, pay_address, MAX(address_index) AS address_index, "
+                "SUM(COALESCE(received_cents,0)) AS received_cents, "
+                "SUM(COALESCE(expected_cents,0)) AS expected_cents "
+                "FROM orders WHERE method=? AND address_index IS NOT NULL "
+                "AND COALESCE(received_cents,0) > 0 AND swept_at IS NULL "
+                "GROUP BY lower(pay_address) ORDER BY MIN(id) ASC", (method,)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT MIN(id) AS id, pay_address, MAX(address_index) AS address_index, "
+                "SUM(COALESCE(received_cents,0)) AS received_cents, "
+                "SUM(COALESCE(expected_cents,0)) AS expected_cents "
+                "FROM orders WHERE address_index IS NOT NULL "
+                "AND COALESCE(received_cents,0) > 0 AND swept_at IS NULL "
+                "GROUP BY lower(pay_address) ORDER BY MIN(id) ASC").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def mark_address_swept(pay_address: str, txid: str = "") -> None:
+    """Mark EVERY funded, unswept order row on a per-order address swept after an
+    address-level sweep (the pool accumulates several orders' coins on one address; one
+    sweep clears them all). Idempotent — rows already stamped are untouched."""
+    addr = (pay_address or "").strip()
+    if not addr:
+        return
+    conn = connect()
+    try:
+        conn.execute(
+            "UPDATE orders SET swept_at=datetime('now'), sweep_txid=? "
+            "WHERE lower(pay_address)=lower(?) AND swept_at IS NULL AND COALESCE(received_cents,0) > 0",
+            (str(txid or ""), addr))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def log_sweep(method: str, txid: str, amount_cents: int, from_address: str,
+              to_address: str) -> bool:
+    """Idempotently record an outbound sweep (per-order address -> main/cold) so EVERY
+    forward is visible. Idempotent by (method, txid): a duplicate is a no-op. Never raises
+    — sweep logging must not break a sweep. Returns True if recorded for the first time."""
+    if not txid or not method:
+        return False
+    conn = connect()
+    try:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO sweep_log(method, txid, amount_cents, from_address, to_address) "
+            "VALUES(?,?,?,?,?)",
+            (str(method), str(txid), int(amount_cents or 0), str(from_address or ""), str(to_address or "")))
+        conn.commit()
+        return (cur.rowcount or 0) > 0
+    except sqlite3.Error:
+        return False
+    finally:
+        conn.close()
+
+
+def list_sweeps(limit: int = 200) -> list[dict]:
+    """Recent sweep-forward log rows, newest first (admin / reconciliation view)."""
+    conn = connect()
+    try:
+        rows = conn.execute("SELECT * FROM sweep_log ORDER BY id DESC LIMIT ?", (int(limit),)).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
 

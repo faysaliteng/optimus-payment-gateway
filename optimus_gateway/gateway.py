@@ -76,15 +76,17 @@ def create_payment(method: str, amount: float, *, merchant_order_id=None,
     elif is_evm(method) and xpub:
         # per-order address (recommended): derive a fresh child of the watch-only xpub.
         # A single GLOBAL index across all EVM methods keeps every address unique, so
-        # BSC/ETH/Polygon orders can never collide on the same address.
-        conn = db.connect()
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            address_index = db.next_address_index(conn, "_evm")
-            conn.commit()
-        finally:
-            conn.close()
-        pay_address = hdwallet.address_from_xpub(xpub, address_index)
+        # BSC/ETH/Polygon orders can never collide on the same address. create_addressed_order
+        # handles the whole reservation atomically (pool-aware index alloc -> derive ->
+        # stale-flip -> insert, retrying a different index if the open-address backstop
+        # trips). With the pool OFF this mints a fresh monotonic index every time (the
+        # original behavior); with it ON an idled, cooled-down address may be reused to
+        # save sweep gas — the two-tier attribution in db.credit_by_address keeps that safe.
+        order = db.create_addressed_order(
+            method, amount, lambda i: hdwallet.address_from_xpub(xpub, i),
+            merchant_order_id=merchant_order_id, notify_url=notify_url,
+            redirect_url=redirect_url, metadata=metadata, ttl_minutes=ttl_minutes)
+        return _public_order(order)
     elif is_evm(method) and shared:
         # amount-match mode on a shared address
         pay_address = shared

@@ -2,6 +2,7 @@
 bip-utils>=2.9.3          # BIP32/39/44 HD derivation (xpub -> per-order addresses)
 eth-account>=0.11.0       # sign sweep transactions (dedicated hot-wallet mode)
 eth-utils>=4.0.0
+coincurve>=19.0.0         # secp256k1 signing for the Litecoin (BIP143 P2WPKH) sweep signer
 
 # --- API server ---
 fastapi>=0.110.0

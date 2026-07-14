@@ -209,6 +209,33 @@ CHAINS: dict[str, dict] = {
         "toncenter": "https://toncenter.com/api/v3",
         "explorer": "https://tonviewer.com/transaction/",
     },
+    # ----------------------------------------------------------------------
+    #  Litecoin — a native-coin UTXO chain (scanner "utxo"), NOT an EVM/stablecoin.
+    #
+    #  Per-order native-segwit (bech32 ltc1…) addresses are derived from a watch-only
+    #  BIP84 account xpub/zpub (see ltc.derive_ltc_address). Deposits are read from
+    #  litecoinspace.org (a mempool.space-style API — free, no key). LTC is volatile, so
+    #  a deposit credits at its USD VALUE (ltc.sats_to_usd_cents) using a pluggable price
+    #  feed, rather than 1:1 like the stablecoins above. Amounts are handled in litoshis
+    #  ("sats", 1 LTC = 1e8), converted to integer USD cents only at credit time.
+    #
+    #  The EVM getLogs watcher / EVM sweeper never touch this method: it carries no token
+    #  contract, is excluded from every evm-scoped derived structure below, and
+    #  watcher.scan_all silently skips any scanner it doesn't handle. All LTC logic —
+    #  address derivation, the litecoinspace watcher, USD pricing, and the BIP143 P2WPKH
+    #  signer/sweeper — lives in ltc.py.
+    "ltc": {
+        "label": "Litecoin (LTC)",
+        "short": "LTC",
+        "scanner": "utxo",
+        "coin": "LTC",
+        "decimals": 8,             # 1 LTC = 1e8 litoshis (sats); no cents divisor applies
+        "hrp": "ltc",              # bech32 HRP for native-segwit (P2WPKH) ltc1q… addresses
+        "api": "https://litecoinspace.org/api",
+        "cursor_key": "ltc_watch_last_block",
+        "confirmations": 3,        # LTC ~2.5-min blocks; a few confirms is plenty
+        "explorer": "https://blockchair.com/litecoin/transaction/",
+    },
 }
 
 # The EVM chains that can ALSO be swept / wrong-network-recovered. Every EVM chain
@@ -264,6 +291,12 @@ def stablecoins_for_chain(method: str) -> dict:
 
 def is_evm(method: str) -> bool:
     return CHAINS.get(method, {}).get("scanner") == "evm"
+
+
+def is_utxo(method: str) -> bool:
+    """True for native-coin UTXO chains (Litecoin) — the ltc.py signer/watcher, not the
+    EVM getLogs path, drives these."""
+    return CHAINS.get(method, {}).get("scanner") == "utxo"
 
 
 def cents_divisor(method: str) -> int:

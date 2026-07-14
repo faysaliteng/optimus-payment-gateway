@@ -44,6 +44,19 @@ GAS = {
 }
 
 
+def _log_forward(method: str, txid: str, amount_cents: int, from_addr: str, dest: str) -> None:
+    """Record an outbound sweep (per-order address -> main/cold) so EVERY forward is
+    visible for reconciliation. Idempotent by (method, txid). Never raises: sweep logging
+    must not break a sweep."""
+    if not txid or not method:
+        return
+    try:
+        db.log_sweep(str(method), str(txid), int(amount_cents or 0),
+                     str(from_addr or ""), str(dest or ""))
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _xprv() -> str:
     return hdwallet.load_sweep_xprv(config.GATEWAY_SWEEP_KEY_PATH)
 
@@ -191,10 +204,24 @@ def recover_wrongnet(credit: bool = True) -> dict:
             # are never told funds "moved" when they didn't.
             time.sleep(12)
             tokens_map = CHAINS[method]["tokens"]
+            confirmed_any = False
             for s in sent:
                 contract = tokens_map.get(s["token"])
                 if contract is None or evm.token_balance(eps, contract, addr) <= 10_000:
                     swept.append(s)
+                    confirmed_any = True
+                    # ALL-SWEEPS-LOGGING: record every confirmed forward (per-order address
+                    # -> cold main) so the money-out is auditable. `amount` is in whole
+                    # tokens (USDT/USDC ~= USD); convert to cents.
+                    _log_forward(method, s.get("txid", ""),
+                                 int(round(float(s.get("amount") or 0) * 100)), addr, dest)
+            if confirmed_any:
+                # De-dup the accumulating pool: one address holds several orders' coins, so
+                # stamp EVERY funded row on it swept in one shot (idempotent).
+                try:
+                    db.mark_address_swept(addr, sent[-1].get("txid", ""))
+                except Exception:  # noqa: BLE001
+                    pass
     return {"status": "ok", "swept": swept, "scanned": len(rows)}
 
 

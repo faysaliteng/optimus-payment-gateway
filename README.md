@@ -77,9 +77,9 @@ collected funds.)*
 
 ## 🪙 Supported networks & tokens
 
-Accept **USDT and USDC** across **7 EVM chains + TON** — more networks than most
-popular gateways, all from a single watch-only xpub. Enable any subset (the Setup
-wizard shows them as checkboxes; or set `OPG_ENABLED_METHODS`).
+Accept **USDT and USDC** across **7 EVM chains + TON**, plus native **Litecoin** — more
+networks than most popular gateways, all from watch-only extended public keys. Enable any
+subset (the Setup wizard shows them as checkboxes; or set `OPG_ENABLED_METHODS`).
 
 | Network | Chain ID | Tokens accepted | Gas coin | Auto-sweep | Notes |
 |---|---|---|---|---|---|
@@ -91,6 +91,7 @@ wizard shows them as checkboxes; or set `OPG_ENABLED_METHODS`).
 | **Ethereum** | 1 | USDT · USDC | ETH | ✅ | maximum compatibility |
 | **Avalanche C-Chain** | 43114 | USDT · USDC · .e | AVAX | ✅ | fast finality |
 | **TON** | — | USDT (jetton) | TON | manual¹ | Telegram-native, memo-routed |
+| **Litecoin (LTC)** | — | native LTC | LTC | ✅ | 🪙 **native coin, ~$0.0001 sweep fee — no gas tank**; credited at USD value. [`docs/LITECOIN.md`](docs/LITECOIN.md) |
 
 <sub>All EVM tokens are the **official Circle-issued USDC** and **Tether USDT** contracts
 (6-decimal on L2s, 18-decimal on BSC), with popular **bridged** variants (USDC.e / USDbC /
@@ -324,6 +325,20 @@ ChatGPT / Claude / Cursor:
 - The panel's **Dashboard** shows each tank's balance and warns you when one is low.
 
 **Gas is ONLY needed to move money to your cold wallet. Receiving payments needs none.**
+
+### 💡 Selling cheap items? Two gas-savers
+
+EVM sweep gas is a **fixed cost per forward**, so consolidating a $0.50 order can cost more
+than it's worth. Two features fix that:
+
+- **Litecoin** — the sweep fee is ~**$0.0001** (paid from the LTC itself, no gas tank), so
+  small orders keep essentially all their value. Ideal for sub-$1 products. See
+  [`docs/LITECOIN.md`](docs/LITECOIN.md).
+- **Accumulating address pool** (EVM, opt-in) — reuse a small pool of addresses so many
+  buyers' small payments **pile up on one address** and sweep **once** at a `$` threshold,
+  amortizing gas. An address is locked while it has a pending order and only recycled after
+  a safety cooldown, with attribution scoped to the open buyer. Off by default; enable with
+  `pool_enabled=true`. Full design + safety notes: [`docs/ADDRESS_POOL.md`](docs/ADDRESS_POOL.md).
 
 ## 🔐 Watch-only vs. dedicated wallet (your safety choice)
 

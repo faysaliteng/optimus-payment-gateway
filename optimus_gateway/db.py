@@ -202,10 +202,11 @@ def pool_reuse_cooldown_minutes() -> int:
 
 def next_evm_address_index(conn: sqlite3.Connection) -> int:
     """Allocate a per-order EVM HD index (single global space). Pool OFF -> the next
-    never-reused monotonic index. Pool ON -> the LRU REISSUABLE index in 1..N (an
-    address with NO open order AND whose last activity is fully past the reuse
-    cooldown); if none is free, MINT a new index (grows the pool — a caller is never
-    blocked; the pool self-sizes to peak concurrency). Call inside an open transaction."""
+    never-reused monotonic index. Pool ON -> the FULLEST REISSUABLE index in 1..N: among
+    addresses with NO open order AND past the reuse cooldown, pick the one holding the MOST
+    un-swept balance (closest to the sweep threshold) so it reaches the threshold and sweeps
+    SOONEST — concentrating coins instead of spreading them thin — tie-broken by LRU. If none
+    is free, MINT a new index (grows the pool; a caller is never blocked). Open a txn first."""
     if not pool_enabled():
         return next_address_index(conn, _EVM_COUNTER)
     n = pool_size()
@@ -220,7 +221,8 @@ def next_evm_address_index(conn: sqlite3.Connection) -> int:
                           AND (reservation_expires_at IS NULL OR reservation_expires_at > datetime('now'))
                         THEN 1 ELSE 0 END) = 0
            AND datetime(MAX(COALESCE(last_activity_at, created_at)), '+' || ? || ' minutes') < datetime('now')
-        ORDER BY MAX(COALESCE(last_activity_at, created_at)) ASC
+        ORDER BY SUM(CASE WHEN swept_at IS NULL THEN COALESCE(received_cents,0) ELSE 0 END) DESC,
+                 MAX(COALESCE(last_activity_at, created_at)) ASC
         LIMIT 1
         """,
         (n, cooldown)).fetchone()

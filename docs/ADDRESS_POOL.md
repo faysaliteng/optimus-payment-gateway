@@ -68,11 +68,22 @@ the cooldown only ever holds the genuinely-risky un-paid addresses.
 
 ### The cooldown only holds UN-PAID addresses
 
-The reissue cooldown (`pool_reuse_cooldown_minutes`) is clamped to be **≥ the amount/late
-window** (`AMOUNT_COOLDOWN_MINUTES`, the 24h window a slow buyer can still pay in) and
-defaults to **48h**. It applies **only** to addresses whose order was *not* fully paid — the
-only case where a legit payment could still be in flight. A paid address ignores it entirely,
-because its money has already arrived and confirmed; nothing more is coming.
+The reissue cooldown (`pool_reuse_cooldown_minutes`) defaults to **60 min** — the ~40-min pay
+window plus a short confirm tail — and is floored at `POOL_REISSUE_FLOOR_MINUTES` (the pay
+window + 10). It applies **only** to addresses whose order was *not* fully paid — the only case
+where a legit payment could still be in flight. A paid address ignores it entirely, because its
+money has already arrived and confirmed; nothing more is coming.
+
+**This is deliberately *not* the 24h amount cooldown.** The two are different mechanisms: the
+*amount* gateway reuses an on-chain **amount** on a shared address, so it must wait the full
+`AMOUNT_COOLDOWN_MINUTES` (24h) late-payment window. The address pool gives every order its
+**own** address, and the watcher (`active_order_addresses`) keeps crediting that address for the
+full 24h **regardless of this setting** — so shortening the reuse cooldown only makes addresses
+recycle toward the sweep threshold faster; it never stops a late payment from being credited. A
+recycled address only has to stay parked long enough for a last-second payment to confirm and
+credit the **original** order before the address is handed to a new buyer — minutes, not a day.
+The trade-off: the shorter it is, the faster addresses sweep, but the larger the (rare) residual
+that a payment confirming *after* the cooldown *and* after reuse credits the current occupant.
 
 ### Pending-scoped unique index — the concurrency backstop
 
@@ -86,7 +97,7 @@ CREATE UNIQUE INDEX idx_deposits_gateway_open_address
 ```
 
 Under a race (two allocations landing on the same index at once), the second `INSERT`
-fails on this index rather than creating two live orders on one address. The 24h/48h
+fails on this index rather than creating two live orders on one address. The reuse
 cooldown — which a partial index can't express (no `now()` in a SQLite partial predicate) —
 is enforced by the allocator; this index enforces the *instantaneous* one-open-order rule.
 With reuse OFF (one row per index ever), the index is trivially satisfied and nothing
@@ -116,7 +127,8 @@ a txid resolves to **exactly one** buyer. With reuse OFF this collapses to the o
 |---|---|---|
 | `pool_enabled` / `OPG_POOL_ENABLED` | `false` | Master switch. Off → original never-reuse monotonic allocator (unchanged behaviour). |
 | `pool_size` / `OPG_POOL_SIZE` | `30` | `N`, the pool's index range `1..N` and its concurrency floor. The pool grows past `N` on demand and shrinks back to reuse as addresses free. |
-| `pool_reuse_cooldown_minutes` / `OPG_POOL_REUSE_COOLDOWN_MINUTES` | `2880` (48h) | How long an **un-paid** address is held before it can be reissued. A **fully-paid** address is reusable immediately and ignores this. **Clamped to ≥ `AMOUNT_COOLDOWN_MINUTES`** (24h) — the late-payment window that makes reuse safe. |
+| `pool_reuse_cooldown_minutes` / `OPG_POOL_REUSE_COOLDOWN_MINUTES` | `60` | How long an **un-paid** address is held before it can be reissued. A **fully-paid** address is reusable immediately and ignores this. Floored at `POOL_REISSUE_FLOOR_MINUTES` (pay window + 10). Independent of the 24h watcher window — see §3. |
+| `OPG_POOL_REISSUE_FLOOR_MINUTES` | `RESERVATION_TTL_MINUTES + 10` (50) | Hard floor for the reuse cooldown — the pay window plus a confirm tail, so a normal last-second payment always lands on the original order before reuse. |
 | `sweep_min_usd_<method>` / per-chain sweep $ threshold | per deployment | Don't sweep an address until its accumulated balance crosses this dollar value — this is what turns many small deposits into one gas-efficient sweep. |
 
 Turn it on for a low-fee, high-small-order chain (BEP20) and leave it off for chains where
@@ -144,6 +156,8 @@ How to eliminate it entirely if your risk tolerance requires zero residual:
 - **Per-buyer permanent addresses** — never reuse across buyers (each buyer keeps one
   address), which removes reuse — and its gas savings — for the affected buyers only.
 
-For most shops the default (bounded pool + 48h cooldown) is the right trade: near-total gas
-savings on small orders, with a residual that only a payer who waited **days** could ever
-trigger.
+For most shops the default (bounded pool + 60-min cooldown) is the right trade: near-total gas
+savings on small orders, with a residual that only a payer whose payment confirmed **well after
+the pay window closed *and* after the address was already recycled** could ever trigger — vanishing
+for the prompt Trust-Wallet payers who confirm in ~2 min. Shops that prefer a wider safety margin
+over recycle speed can raise `pool_reuse_cooldown_minutes` (e.g. back to `2880` for 48h).

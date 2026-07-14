@@ -90,6 +90,13 @@ class Config:
     WATCH_POLL_SECONDS = max(10, _i("OPG_WATCH_POLL_SECONDS", 20))
     RESERVATION_TTL_MINUTES = max(5, min(240, _i("OPG_RESERVATION_TTL_MINUTES", 40)))
     AMOUNT_COOLDOWN_MINUTES = _i("OPG_AMOUNT_COOLDOWN_MINUTES", 1440)  # 24h late-payment window
+    # Address-POOL reuse floor — a SEPARATE, much shorter horizon than the amount cooldown.
+    # The amount gateway reuses an AMOUNT on a shared address (must wait the full 24h). The
+    # address pool gives each order its OWN address and the watcher (active_order_addresses)
+    # keeps crediting it for AMOUNT_COOLDOWN_MINUTES regardless, so a recycled address only
+    # has to stay parked long enough for a last-second payment to confirm and credit the
+    # ORIGINAL order before reuse: the pay window + a short confirm tail, not a whole day.
+    POOL_REISSUE_FLOOR_MINUTES = _i("OPG_POOL_REISSUE_FLOOR_MINUTES", RESERVATION_TTL_MINUTES + 10)
 
     # ---- sweep tuning ----
     SWEEP_POLL_SECONDS = _i("OPG_SWEEP_POLL_SECONDS", 120)

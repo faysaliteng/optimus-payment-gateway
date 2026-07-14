@@ -189,15 +189,22 @@ def pool_size() -> int:
 
 
 def pool_reuse_cooldown_minutes() -> int:
-    """An address is only re-handed to a NEW order once every prior order's late-payment
-    window has fully closed. Floored at config.AMOUNT_COOLDOWN_MINUTES (the window the
-    watcher still credits into); defaults to 48h for extra margin so a stale/stuck
-    payment can never land on a new occupant."""
+    """How long an UNPAID/PARTIAL/EXPIRED address stays parked before it is re-handed to a
+    new order. (A fully-PAID address reuses immediately — its funds are already confirmed.)
+    Measured from creation/last-partial; the pay window is RESERVATION_TTL_MINUTES, so the
+    default 60 frees an abandoned address ~20 min AFTER it expires — enough for a last-second
+    payment to confirm and credit the ORIGINAL order first. Floored at
+    config.POOL_REISSUE_FLOOR_MINUTES (pay window + a confirm tail) so it can't be set so low
+    that a normal late confirm lands on the next occupant. Note: the watcher still credits any
+    address for config.AMOUNT_COOLDOWN_MINUTES (see active_order_addresses), so shortening this
+    only speeds recycling — it does NOT stop late payments being credited. Trade-off: shorter =
+    faster sweeps, but a larger (rare) residual that a >window-late payment credits the current
+    occupant instead of the original payer."""
     try:
-        v = int(get_setting("pool_reuse_cooldown_minutes", "2880") or 2880)
+        v = int(get_setting("pool_reuse_cooldown_minutes", "60") or 60)
     except (TypeError, ValueError):
-        v = 2880
-    return max(int(config.AMOUNT_COOLDOWN_MINUTES), v)
+        v = 60
+    return max(int(config.POOL_REISSUE_FLOOR_MINUTES), v)
 
 
 def next_evm_address_index(conn: sqlite3.Connection) -> int:

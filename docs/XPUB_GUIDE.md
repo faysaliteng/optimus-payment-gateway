@@ -125,13 +125,61 @@ You do **not** have to use the tool above — if your wallet can export an
 | Wallet | Can it export an ETH account xpub? | How |
 |---|---|---|
 | **MetaMask** | Not from the UI. | MetaMask derives accounts along `m/44'/60'/0'/0/i` (Account 1 = index 0, Account 2 = index 1, …). Export your **Secret Recovery Phrase** and feed it to the offline tool in Option A. MetaMask's *“Account 2”* address will equal the tool's `/1` row — a handy sanity check. |
-| **Trust Wallet** | Not directly. | Trust doesn't expose an xpub for EVM. Use its recovery phrase in the offline tool (Option A). |
+| **Trust Wallet** | Not directly (it's a BIP39 wallet). | Feed its recovery phrase to the offline tool — see the **[full step-by-step below](#trust-wallet--step-by-step)**. |
 | **Ledger Live** | Not from the UI, and beware the path. | Ledger Live uses a *different* layout for extra Ethereum accounts (`m/44'/60'/x'/0/0`, incrementing the **account'** hardened level), so its second account is **not** child `/1` of one xpub. Safest: dedicate a wallet to the gateway (Option B) or derive from a phrase in the offline tool and only ever use index 1,2,3 as receiving addresses. |
 | **Electrum** | Yes, but it's a **Bitcoin** xpub. | *Wallet → Information → Master Public Key* gives an xpub/zpub — but Electrum is Bitcoin-only, and this gateway settles **EVM/TON**, so an Electrum BTC xpub is **not usable** here. Use Option A or B for an ETH-path key. |
 | **Any BIP39 hardware/software wallet** | Effectively yes. | Take the 12/24-word phrase to the offline tool in Option A. |
 
 **Rule of thumb:** if a wallet won't cleanly give you an `m/44'/60'/0'/0` account xpub,
 use the offline tool (Option A) with that wallet's seed, or use Option B.
+
+### Trust Wallet — step by step
+
+Trust Wallet is a **BIP39** wallet, so it won't show you an xpub directly — but its
+recovery phrase feeds the offline tool cleanly. This is the exact path for the EVM chains
+(BSC / Ethereum / Polygon).
+
+**On your phone (get the recovery phrase):**
+
+1. Open Trust Wallet → tap the **⚙ Settings** icon (or the wallet name at the top) →
+   **Wallets**.
+2. Tap the **ⓘ** info icon next to the wallet you'll dedicate to the gateway →
+   **Show Recovery Phrase**.
+3. Authenticate. Trust shows your **12 words**. You need them *only* to type into the
+   **offline** tool on a computer — never into any website or online field.
+
+**On an OFFLINE computer (the BIP39 tool from Option A):**
+
+4. Open [`tools/bip39-standalone.html`](../tools/bip39-standalone.html) with the network
+   **disconnected** (§2.1).
+5. Paste the 12 words into the **BIP39 Mnemonic** box.
+6. Set **Coin → `ETH - Ethereum`.**
+7. Open the **BIP44** tab and copy the **Account Extended Public Key** (`xpub…`). That is
+   your gateway xpub.
+8. Close the page, reconnect the network, and put the value in `OPG_GATEWAY_XPUB` (§5).
+
+> **Sanity check:** in the tool's *Derived Addresses* table, the `m/44'/60'/0'/0/0` row is
+> Trust Wallet's own first BSC/Ethereum address, and the `…/0/1` row is the first per-order
+> address the gateway will hand out. Verifying the `/0` address matches what Trust shows you
+> proves you exported the right key.
+
+### Getting a Litecoin (LTC) `zpub`
+
+Litecoin uses a **different** key from EVM — a **BIP84 native-segwit account key (`zpub`)**,
+not the `m/44'/60'/0'/0` Ethereum xpub. There are two ways to get one:
+
+- **Electrum-LTC** (recommended for a dedicated wallet): export it straight from the app —
+  follow the complete [`ELECTRUM_LTC.md`](ELECTRUM_LTC.md) guide. Electrum seeds are **not**
+  BIP39, so you do *not* use the offline BIP39 tool for an Electrum wallet.
+- **A BIP39 wallet (Trust Wallet, hardware wallet, …):** use the offline tool exactly like
+  the Trust Wallet steps above, but set **Coin → `LTC - Litecoin`** and open the **BIP84**
+  tab (not BIP44). Copy the **Account Extended Public Key** (`zpub…`) and give it to the
+  gateway as the `ltc_gateway_xpub` setting (see [`LITECOIN.md`](LITECOIN.md) §3). The
+  derived addresses will be native `ltc1…`.
+
+> The safety rules are identical: only ever copy the **public** key (`xpub`/`zpub`). The
+> **private** key (`xprv`/`zprv`) is needed *only* for optional LTC auto-sweep and goes into
+> a locked file, never online — see [`ELECTRUM_LTC.md`](ELECTRUM_LTC.md) §6.
 
 ---
 

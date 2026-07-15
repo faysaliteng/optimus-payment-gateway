@@ -6,7 +6,7 @@ best rail for *small* orders, and this guide covers both — what it is, how to 
 watch-only, the Electrum key gotcha it handles for you, how deposits are priced and
 credited, the optional Phase-2 auto-sweep, and a ship-safe rollout checklist.
 
-Litecoin support lives in `optimus_gateway/litecoin.py` — the UTXO sibling of
+Litecoin support lives in `optimus_gateway/ltc.py` — the UTXO sibling of
 [`ton.py`](../optimus_gateway/ton.py). It reuses the same per-order-address model, the same
 `db._apply_credit` idempotency, and the same watch-only-by-default key posture as the EVM
 chains ([`SECURITY.md`](SECURITY.md)); only the address format, the block scanner, and the
@@ -58,6 +58,11 @@ Use a wallet you keep **only** for the gateway (so its seed is isolated and its 
 addresses aren't mixed with personal funds). Electrum-LTC, a hardware wallet, or any BIP84
 Litecoin wallet works. Write the seed down offline — it is the only backup of received
 funds and, in watch-only mode, the only key that can ever spend them.
+
+> **Using Electrum-LTC?** Follow the complete start-to-finish walkthrough in
+> [`ELECTRUM_LTC.md`](ELECTRUM_LTC.md) — install & verify, create the wallet, export the
+> `zpub` (and, for Phase 2, the `zprv`), plus maintenance and troubleshooting. The rest of
+> this section summarises the same steps for any BIP84 wallet.
 
 ### 3.2 Paste the account **zpub/xpub** (public key only)
 
@@ -142,8 +147,10 @@ never sign for addresses the watcher didn't credit.
 
 > **Getting the account `zprv`/`xprv` from Electrum:** open the console
 > (*View → Show Console*) and run
-> `wallet.keystore.get_master_private_key(password)`. Treat the result like a seed — paste
-> it once into the locked file and nowhere else.
+> `wallet.keystore.get_master_private_key('password')`. Treat the result like a seed — paste
+> it once into the locked file and nowhere else. **Do not** read `keystore.xprv` directly on
+> a password-protected wallet — that's the *encrypted* blob, not the key. Full walkthrough:
+> [`ELECTRUM_LTC.md`](ELECTRUM_LTC.md) §6.
 
 ### 5.2 The BIP143 signer (no gas tank)
 

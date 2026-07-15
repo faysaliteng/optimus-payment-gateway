@@ -396,7 +396,10 @@ instantly, no restart.
 
 | Doc | For |
 |---|---|
-| [`docs/XPUB_GUIDE.md`](docs/XPUB_GUIDE.md) | Getting your xpub from any wallet (with the offline tool) |
+| [`docs/XPUB_GUIDE.md`](docs/XPUB_GUIDE.md) | Getting your xpub/zpub from any wallet — incl. **Trust Wallet** — with the offline BIP39 tool |
+| [`docs/LITECOIN.md`](docs/LITECOIN.md) | The low-fee **Litecoin** rail — setup, USD-value crediting, sweeps |
+| [`docs/ELECTRUM_LTC.md`](docs/ELECTRUM_LTC.md) | Complete **Electrum-LTC** wallet setup, key export & maintenance |
+| [`docs/ADDRESS_POOL.md`](docs/ADDRESS_POOL.md) | BEP20 address-reuse pool for gas-efficient small orders |
 | [`docs/API.md`](docs/API.md) | The REST API + webhook signatures (for devs / AI) |
 | [`docs/INTEGRATION.md`](docs/INTEGRATION.md) | Add crypto payments to your app in ~10 minutes |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | How it works under the hood |

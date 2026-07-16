@@ -135,7 +135,7 @@ key, no signup. The watcher/sweeper try them in order and move on if one fails.
 | Method | Default RPCs (in order) |
 |---|---|
 | `usdt_bep20` | `https://bnb.api.onfinality.io/public`<br>`https://bsc.rpc.blxrbdn.com`<br>`https://bsc-dataseed.binance.org` |
-| `usdt_polygon` | `https://polygon-bor-rpc.publicnode.com`<br>`https://polygon.drpc.org`<br>`https://polygon-bor.publicnode.com`<br>`https://1rpc.io/matic` |
+| `usdt_polygon` | `https://polygon-bor-rpc.publicnode.com`<br>`https://polygon.drpc.org`<br>`https://polygon-bor.publicnode.com`<br>`https://polygon-pokt.nodies.app`<br>`https://polygon.api.onfinality.io/public`<br>`https://polygon.gateway.tenderly.co` |
 | `usdt_arbitrum` | `https://arbitrum-one-rpc.publicnode.com`<br>`https://arb1.arbitrum.io/rpc`<br>`https://arbitrum.drpc.org` |
 | `usdt_optimism` | `https://optimism-rpc.publicnode.com`<br>`https://mainnet.optimism.io`<br>`https://optimism.drpc.org` |
 | `usdt_base` | `https://base-rpc.publicnode.com`<br>`https://mainnet.base.org`<br>`https://base.drpc.org` |
@@ -155,6 +155,15 @@ key, no signup. The watcher/sweeper try them in order and move on if one fails.
 > call count independent of how many tokens you accept. If Polygon ever stalls, the public
 > pool has degraded — add a paid/keyed RPC via `polygon_gateway_rpc` (below) rather than
 > raising `max_catchup`.
+
+> **Capability-check an RPC, don't just liveness-check it.** When choosing an endpoint,
+> confirm it serves **`eth_getLogs`** (the money-in path) — not merely `eth_blockNumber`.
+> Some public nodes answer `blockNumber` fine but reject `getLogs`, so a naive up/down
+> check would wrongly trust them and the watcher would silently miss deposits. Real example:
+> `1rpc.io/matic` answers `blockNumber` but **rejects `getLogs`**, so it was dropped from the
+> Polygon list — yet `1rpc.io/eth` *does* serve `getLogs` and stays in the Ethereum list.
+> The same provider can differ per chain: test each endpoint **on the chain you'll use it
+> on**, against `getLogs` + `getTransactionReceipt` + `balanceOf`.
 
 ### Overriding EVM RPCs per chain (DB setting)
 

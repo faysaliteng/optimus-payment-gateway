@@ -96,13 +96,25 @@ CHAINS: dict[str, dict] = {
         # watched stablecoins into ONE call per chunk (not one per token — see
         # watcher.scan_evm), so tokens don't multiply the call count; (c) max_catchup
         # caps blocks/cycle. Multiple endpoints below give failover depth (rpc() tries
-        # them in order, moving on when one errors). Endpoints were liveness-checked;
-        # polygon-rpc.com and rpc.ankr.com/polygon were dropped (dead / 401).
+        # them in order, moving on when one errors).
+        #
+        # Endpoints are CAPABILITY-checked, not merely liveness-checked: a Polygon endpoint
+        # MUST serve eth_getLogs (the money-in path), not just answer eth_blockNumber. Three
+        # were dropped for failing that bar: polygon-rpc.com ("API key disabled / tenant
+        # disabled"), rpc.ankr.com/polygon (401 — needs a key), and 1rpc.io/matic (answers
+        # eth_blockNumber but REJECTS eth_getLogs — a liveness check would wrongly pass it,
+        # so it must never be trusted for the watcher). The six below each passed a live
+        # getLogs + getTransactionReceipt + balanceOf + native-getBalance check. NOTE the
+        # per-chain quirk: 1rpc.io/eth DOES serve getLogs, but 1rpc.io/matic does not — test
+        # each chain's endpoints on that chain; do not assume a provider behaves the same on
+        # every network.
         "rpcs": [
             "https://polygon-bor-rpc.publicnode.com",
             "https://polygon.drpc.org",
             "https://polygon-bor.publicnode.com",
-            "https://1rpc.io/matic",
+            "https://polygon-pokt.nodies.app",
+            "https://polygon.api.onfinality.io/public",
+            "https://polygon.gateway.tenderly.co",
         ],
         "rpc_setting": "polygon_gateway_rpc",
         "cursor_key": "polygon_watch_last_block",

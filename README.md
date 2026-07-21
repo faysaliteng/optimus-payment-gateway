@@ -106,13 +106,16 @@ subset (the Setup wizard shows them as checkboxes; or set `OPG_ENABLED_METHODS`)
 | **Ethereum** | 1 | USDT · USDC | ETH | ✅ | maximum compatibility |
 | **Avalanche C-Chain** | 43114 | USDT · USDC · .e | AVAX | ✅ | fast finality |
 | **TON** | — | USDT (jetton) | TON | manual¹ | Telegram-native, memo-routed |
-| **Litecoin (LTC)** | — | native LTC | LTC | ✅ | 🪙 **native coin, ~$0.0001 sweep fee — no gas tank**; credited at USD value. [`docs/LITECOIN.md`](docs/LITECOIN.md) |
+| **Litecoin (LTC)** | — | native LTC | LTC | adapter² | 🪙 **native coin, per-input sweep fee ~fractions of a cent — no gas tank**; credited at USD value. [`docs/LITECOIN.md`](docs/LITECOIN.md) |
 
 <sub>All EVM tokens are the **official Circle-issued USDC** and **Tether USDT** contracts
 (6-decimal on L2s, 18-decimal on BSC), with popular **bridged** variants (USDC.e / USDbC /
 USDT.e) also watched so no payment is missed. Every contract address was cross-verified on
 the chain's official explorer — see [`docs/CHAINS.md`](docs/CHAINS.md). ¹TON uses a shared
-memo address, so funds already arrive in one wallet.</sub>
+memo address, so funds already arrive in one wallet. ²Litecoin ships as a **tested adapter**
+(watch-only BIP84 derivation + a BIP143 P2WPKH signer + USD pricing + a consolidating sweep in
+`ltc.py`) that you wire into your own poll loop — the bundled server auto-runs the EVM + TON
+rails; LTC is a library, not yet auto-scanned. See [`docs/LITECOIN.md`](docs/LITECOIN.md).</sub>
 
 **Because every EVM chain shares one address space, the same xpub serves all of them** —
 one setup covers BSC, Ethereum, Polygon, Arbitrum, Optimism, Base and Avalanche, and a
@@ -121,8 +124,9 @@ buyer who pays on the "wrong" one is auto-recovered. Adding another EVM chain is
 
 > **Method keys** (for `OPG_ENABLED_METHODS` / the API `method` field): `usdt_bep20`,
 > `usdt_polygon`, `usdt_arbitrum`, `usdt_optimism`, `usdt_base`, `usdt_erc20`,
-> `usdt_avalanche`, `usdt_ton`. *(Tron/TRC-20 uses a non-EVM address format and isn't in
-> this build yet — it's on the roadmap.)*
+> `usdt_avalanche`, `usdt_ton`, and `ltc` (native coin, credited at USD value — configured
+> separately, see below). *(Tron/TRC-20 uses a non-EVM address format and isn't in this build
+> yet — it's on the roadmap.)*
 
 ## 📋 What you need before you start
 
@@ -250,10 +254,11 @@ Open the **`data.checkout_url`** in a browser, send $1 of USDT on BEP20 to the a
 shown, and watch the page flip to **"✔ Payment received."** That's your gateway working
 end-to-end. ✅
 
-> Testing webhooks locally? The gateway can't reach `http://localhost` on your machine
-> from itself over the internet, so for a local test either **poll**
-> `GET /api/v1/order/{trade_id}` (its `data.status` becomes `paid`), or expose your app
-> with a tunnel like **ngrok** and use that `https://…` URL as your `notify_url`.
+> Testing webhooks locally? By default the gateway **refuses `notify_url`s that resolve to
+> private/loopback addresses** (an SSRF guard — it won't be tricked into calling
+> `169.254.169.254`, `localhost`, `10.x`, …). So for a local test either **poll**
+> `GET /api/v1/order/{trade_id}` (its `data.status` becomes `paid`), expose your app with a tunnel
+> like **ngrok** and use that `https://…` URL, or set `OPG_ALLOW_PRIVATE_WEBHOOKS=true` (**dev only**).
 
 ---
 
@@ -278,6 +283,42 @@ end-to-end. ✅
 4. The gateway **notifies your app** ("paid") and — with auto-sweep on — **forwards the
    money into your one cold wallet** (paying gas from the gas tank).
 
+*(This shows per-order EVM mode. TON uses one shared address + a per-order memo; the LTC adapter
+uses per-order LTC addresses; shared-address mode matches by exact amount; and the **Binance rail**
+below verifies a Pay order id instead of watching the chain.)*
+
+### ⏱️ When does it flip to "paid", and what about wrong amounts?
+
+- **Confirmations:** an order flips to `paid` after enough block confirmations — per chain:
+  **BSC 12 · Ethereum 6 · Polygon 20 · Arbitrum/Optimism/Base 5 · Avalanche 4** (override globally
+  with `OPG_MIN_CONFIRMATIONS`, or per method with the `confirmations_<method>` setting; raise it for
+  large amounts). So a payment is typically credited within seconds-to-minutes of landing.
+- **Underpaid?** The order stays `pending` and `received_cents` shows the progress — the buyer can
+  send the rest in **any number of transfers**; it flips to `paid` the moment the total covers
+  `pay_amount_cents`.
+- **Overpaid?** Still `paid`, with `overpaid_cents` reported so you can refund or credit the extra.
+- **A late deposit after it's already paid** is recorded as a **top-up** (and still swept in
+  per-order mode).
+
+### 🧰 Command-line tools
+
+```bash
+python run.py serve             # the payment service: API + watcher + sweeper + webhook sender
+python run.py checkxpub XPUB    # validate an xpub + preview its first 5 addresses (do this before going live)
+python run.py newwallet         # generate a dedicated hot wallet for auto-sweep (non-wizard path)
+python run.py tanks             # show gas-tank balances per chain
+python run.py recover           # one-shot: credit + sweep any wrong-network funds now
+```
+
+### 🖥️ Admin dashboard (optional second process)
+
+`python -m admin.app` (port **8001**, HTTP Basic auth, **disabled unless `OPG_ADMIN_PASSWORD` is
+set**) gives you the browser **Setup Wizard** (validate/preview an xpub, one-click generate a
+dedicated wallet, pick chains + sweep destination, all saved live with **no restart**) plus a
+read-mostly **dashboard**: order KPIs, a filterable orders table, per-order detail, live gas-tank
+balances with low-fuel warnings, and a one-click **wrong-network recover**. It's a separate Flask
+app from the core service — run it only while configuring, or keep it up for monitoring.
+
 ---
 
 ## 🔌 Connect it to your app / bot
@@ -301,10 +342,29 @@ POST http://your-gateway:8000/api/v1/order/create
 ```
 The response wraps the result in a **`data`** object — read `data.pay_address`,
 `data.pay_amount`, `data.checkout_url`, `data.trade_id`. When it's paid, we POST a
-**signed webhook** to your `notify_url` (verify the `X-OPG-Signature` header). If you set
-`OPG_MERCHANT_API_KEY`, each request must include `api_key` + an HMAC `signature` (it's
-open while that key is empty). Full details: [`docs/API.md`](docs/API.md) ·
-[`docs/INTEGRATION.md`](docs/INTEGRATION.md) · examples in [`examples/`](examples/).
+**signed webhook** to your `notify_url` — verify it (see the snippet below). With no
+`OPG_MERCHANT_API_KEY` set, create-order is accepted **only from localhost** (safe for local
+dev; remote callers get `403`); set `OPG_MERCHANT_API_KEY` + `OPG_MERCHANT_API_SECRET` before
+exposing it publicly, and each request then needs `api_key` + an HMAC `signature`. Full details:
+[`docs/API.md`](docs/API.md) · [`docs/INTEGRATION.md`](docs/INTEGRATION.md) · examples in
+[`examples/`](examples/).
+
+**Verify the "paid" webhook** (the single most safety-critical step — same signing scheme as requests):
+```python
+import hmac, hashlib
+def sign_params(secret, body):                       # canonical sorted k=v&… (skip signature/sign + empties)
+    payload = "&".join(f"{k}={body[k]}" for k in sorted(body)
+                       if k not in ("signature", "sign") and body[k] not in (None, ""))
+    return hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+
+def handle_webhook(json_body, header_sig, secret):   # header = X-OPG-Signature
+    if not hmac.compare_digest(header_sig or "", sign_params(secret, json_body)):
+        return 403                                   # forged / mismatch → reject
+    if json_body.get("status") == "paid":            # terminal + idempotent: credit the trade_id ONCE
+        mark_paid(json_body["trade_id"])
+    return 200
+```
+No webhooks in your setup? Poll `GET /api/v1/order/{trade_id}` and act on `data.status == "paid"`.
 
 ### 🤖 Give this to your AI
 
@@ -326,18 +386,20 @@ Setting up your own bot/shop and want an AI to wire this in **end-to-end, nothin
 > - **Auth:** if `OPG_MERCHANT_API_KEY` is set (required in production), every create call must add
 >   `api_key` + a `signature` = HMAC-SHA256 over the sorted `k=v&…` of the body (excluding
 >   `signature`/`sign`) with my secret. Worked example is in `docs/API.md` — copy it exactly.
-> - **Response is wrapped:** `{ status_code, data: { trade_id, order_id, method, pay_address,
->   pay_amount, pay_amount_cents, status, expires_at, checkout_url, memo? } }`. Everything real is
->   under `data`.
+> - **Response is wrapped:** `{ status_code, data: { trade_id, merchant_order_id, method, pay_address,
+>   pay_amount, pay_amount_cents, status, expires_at, checkout_url, pay_memo? } }` (`merchant_order_id`
+>   is the echo of my request `order_id`; `pay_memo` is non-null only on TON). Everything real is under `data`.
 > - **Show the buyer `data.checkout_url`** (hosted page: QR + address + live status), **or** render
 >   `data.pay_address` + `data.pay_amount` myself. **Always display `pay_amount`, never my original
 >   quote** — in shared-address mode it's nudged a cent so the amount identifies the order; the buyer
->   must send that exact amount. For `usdt_ton`, also show `data.memo`.
-> - **Settlement:** when paid, the gateway POSTs a **signed webhook** to my `notify_url`. **Verify
->   it:** recompute HMAC-SHA256 of the raw JSON body with my secret and compare **constant-time** to
->   the `X-OPG-Signature` header; reject on mismatch. Payload = `{ event, trade_id, order_id, method,
->   status, amount_cents, received_cents, pay_address, timestamp }`. `status == "paid"`
->   (event `payment.completed`) is my settlement signal.
+>   must send that exact amount. For `usdt_ton`, also show `data.pay_memo` (the buyer MUST include it).
+> - **Settlement:** when paid, the gateway POSTs a **signed webhook** to my `notify_url`. **Verify it**
+>   with the SAME scheme as request signing (see `docs/API.md` → "Verifying a webhook"): recompute
+>   HMAC-SHA256 over the canonical sorted `k=v&…` of the payload (**excluding** `signature`/`sign` and
+>   empty values) with my secret, and compare **constant-time** to the `X-OPG-Signature` header; reject
+>   on mismatch. Payload = `{ event, trade_id, merchant_order_id, method, status, amount_cents,
+>   received_cents, pay_address, timestamp }`. `status == "paid"` (event `payment.completed`) is my
+>   settlement signal.
 > - **No webhooks?** Poll `GET /api/v1/order/{trade_id}` and act on `status == "paid"`.
 > - **Partial / overpayment:** `received_cents` accumulates across transfers; the order flips to
 >   `paid` only once it covers `pay_amount_cents`; an overpayment leaves `received_cents` higher —
@@ -364,8 +426,11 @@ Setting up your own bot/shop and want an AI to wire this in **end-to-end, nothin
 > 2. **Be idempotent.** A webhook can be re-delivered and a reference re-submitted. Treat
 >    `status == "paid"` as terminal and never credit the same `trade_id`/reference twice (the gateway
 >    already burns txids/references end-to-end; mirror that on my side).
-> 3. In production set `OPG_MERCHANT_API_KEY` (the API is open only for local dev) and use an
->    **HTTPS** `notify_url`.
+> 3. **Auth in production:** with no `OPG_MERCHANT_API_KEY`, create-order is refused for non-localhost
+>    callers — but behind a reverse proxy every request *looks* local, so **always set
+>    `OPG_MERCHANT_API_KEY` + `OPG_MERCHANT_API_SECRET`** before exposing it, and use an **HTTPS**
+>    `notify_url` (the gateway refuses `notify_url`s that resolve to private/loopback IPs unless
+>    `OPG_ALLOW_PRIVATE_WEBHOOKS=true`).
 >
 > **Task:** add a **"Pay with crypto"** (and, if I use Binance, **"Pay with Binance"**) flow to my
 > **[describe your app / bot / shop and stack]**: create the order, show the buyer the checkout, and
@@ -434,15 +499,20 @@ Enable it with `OPG_BINANCE_ENABLED=true` + a read-only key + your `OPG_BINANCE_
 EVM sweep gas is a **fixed cost per forward**, so consolidating a $0.50 order can cost more
 than it's worth. Two features fix that:
 
-- **Litecoin** — the sweep fee is ~**$0.0001** (paid from the LTC itself, no gas tank), so
-  small orders keep essentially all their value. Ideal for sub-$1 products. See
-  [`docs/LITECOIN.md`](docs/LITECOIN.md).
+- **Litecoin** — the sweep fee is a **few hundred litoshis per input** (fractions of a US cent,
+  paid from the LTC itself — no gas tank), so small orders keep essentially all their value. Ideal
+  for sub-$1 products. Note LTC is set up **separately from the EVM wizard**: it needs its own
+  watch-only BIP84 zpub (`OPG_LTC_XPUB`), `OPG_LTC_ENABLED=true`, and a **live LTC/USD price feed**
+  (deposits credit at USD value — with no rate they credit **$0**); it's a tested adapter you wire
+  into your app's poll loop. See [`docs/LITECOIN.md`](docs/LITECOIN.md).
 - **Accumulating address pool** (EVM, opt-in) — reuse a small pool of addresses so many
   buyers' small payments **pile up on one address** and sweep **once** at a `$` threshold,
   amortizing gas. A **fully-paid** address is reused immediately (its funds are already
   confirmed) — filling the *fullest* address toward the threshold first, so it sweeps sooner;
   an address is locked while its order is pending, and only *un-paid* ones wait a safety
-  cooldown. Attribution is always scoped to the open buyer. Off by default (`pool_enabled=true`).
+  cooldown. Attribution is always scoped to the open buyer. It's a live **DB setting**, not an env
+  var — off by default (`pool_enabled=false`); set `pool_enabled=true` (and optionally `pool_size`,
+  default 30) to enable. Off = byte-for-byte the original never-reuse behaviour.
   Full design + safety notes: [`docs/ADDRESS_POOL.md`](docs/ADDRESS_POOL.md).
 
 ## 🔐 Watch-only vs. dedicated wallet (your safety choice)
@@ -456,6 +526,86 @@ than it's worth. Two features fix that:
 
 Both are non-custodial. Your **main wallet's seed is never on the server** either way —
 it's only ever the *destination* funds get swept to.
+
+---
+
+## 🥇 Why Optimus — an honest, defensible comparison
+
+**The precise claim:** Optimus has the **broadest stablecoin coverage of any self-hosted,
+non-custodial, zero-fee payment gateway we know of** — USDT/USDC across **7 EVM chains + TON** from
+a single watch-only xpub (plus a tested native-Litecoin adapter). It's a *different category* from
+custodial processors (Stripe, PayPal, Coinbase Commerce, BitPay, Cryptomus) and a generation ahead
+of the open-source stablecoin alternative (epusdt). The one self-hosted rival worth a serious
+comparison is **BTCPay Server** — and where BTCPay is better, we say so.
+
+Every capability marked for Optimus is backed by code in this repo (not marketing) and the money
+path is covered by **76 passing tests**. Competitor cells reflect each product's public docs/pricing
+at the time of writing — verify current specifics on their own sites.
+
+| Capability | **Optimus (this repo)** | BTCPay Server | Cryptomus | NOWPayments | Coinbase Commerce | BitPay | epusdt | Stripe / PayPal |
+|---|---|---|---|---|---|---|---|---|
+| **Custody of funds** | **Non-custodial** — watch-only xpub = **0 spendable keys**; auto-sweep adds a dedicated hot key (bounded, never your cold seed) | Non-custodial | **Custodial** | Non-custodial* (hosted 3rd-party) | Non-custodial (onchain protocol) | **Custodial** | Non-custodial | **Custodial** |
+| **Can freeze your money** | **No** | No | Yes | Limited | Limited | Yes | No | Yes |
+| **Self-hostable** | **Yes** — one core process, SQLite/WAL | Yes (node + NBXplorer + Postgres) | No | No | No | No | Yes (Go + MySQL + Redis) | No |
+| **Open source** | **Yes (MIT)** | Yes (MIT) | No | No | No | No | Yes | No |
+| **Fees beyond gas** | **0%** | 0% | ~0.4–2% | ~0.5% | ~1% | ~1% | 0% | ~2.9% + fixed |
+| **KYC / account** | **None** | None | Yes | Account | Coinbase acct | Business KYC | None | Business verification |
+| **USDT/USDC (+bridged)** | **First-class, 7 EVM + TON** | Limited (BTC-first) | Yes | Yes | Limited | Limited | **TRC-20 only** | On-ramp only |
+| **Bitcoin / Lightning** | No | **Yes (core)** | BTC | BTC | BTC | **BTC + LN** | No | No |
+| **Fiat / cards** | No | No | Yes | Partial | Yes | Yes | No | **Yes (core)** |
+| **Per-order HD address** | **Yes** (`hdwallet.py`) | Yes | Platform-side | Platform-side | Platform-side | Platform-side | **No** (amount-match) | N/A |
+| **Wrong-network recovery** | **Yes** (`sweeper.recover_wrongnet`) | N/A | No | No | No | No | No | N/A |
+| **Binance Pay verification rail** | **Yes** — read-only, anti-replay (receiver-matched when your Pay ID is set) | No | No | No | No | No | No | No |
+| **Webhook signing** | **HMAC-SHA256** | HMAC-SHA256 | MD5 | HMAC | HMAC-SHA256 | Signed | **MD5** | HMAC |
+| **Tested idempotent ledger** | **Yes** — `(txid, logIndex)` PK burned in-txn, 76 tests | Mature/audited | — | — | — | — | No published proof | — |
+
+<sub>*NOWPayments forwards funds to your wallet but is a hosted third party you route through.
+Figures reflect public docs/pricing at time of writing.</sub>
+
+### What genuinely sets Optimus apart
+
+- **Non-custodial, and provably so in code.** In watch-only mode the server is given only an account
+  xpub and `validate_xpub` actively rejects any private key you try to paste — **zero spendable keys
+  on the box**; root it and an attacker can *watch* addresses but move nothing. Turn on auto-sweep and
+  a *dedicated hot-wallet* key signs the forwards — exposure is bounded to that hot wallet + in-flight
+  deposits, and **your cold/main seed is never on the server** either way. Custodial processors hold
+  your money and can freeze it.
+- **Stablecoins across 7 EVM chains + TON from one xpub** (USDT + USDC + bridged USDC.e/USDbC) — the
+  exact gap BTCPay (Bitcoin-first) and epusdt (Tron-USDT only) leave open.
+- **Wrong-network recovery.** Because one key controls the per-order address on *every* EVM chain, a
+  buyer who pays on the wrong EVM network is auto-detected and swept home — a scenario single-chain
+  (epusdt) and Bitcoin-first (BTCPay) designs don't face and don't handle. *(Needs auto-sweep on and
+  the gas tank funded in each chain's native coin; a payment that lands after the order's window is
+  still swept to cold storage but is credited manually.)*
+- **A tested money ledger.** A normalized `(txid, logIndex)` is burned into a PRIMARY-KEY registry
+  *inside the same transaction* that credits, so re-scans, retried webhooks, racing workers, and
+  replays can't double-credit. The **on-chain stablecoin ledger is integer cents** (no float drift in
+  the credited balance); webhooks are **HMAC-SHA256** (not MD5); `notify_url`s are SSRF-guarded; the
+  API is safe-by-default (localhost-only until you set a key). epusdt still signs with MD5 and
+  disambiguates payments only by amount.
+- **A Binance Pay second rail** nothing else here offers — verify a buyer's Binance order id against
+  *your own* history with a read-only key, and (when you set your Pay ID) receiver-matched so it can't
+  be a payment to someone else, then replay-locked so it credits exactly once.
+- **Zero fees, no KYC, no middleman, MIT** — you pay only the blockchain's own gas.
+- **Lightweight self-host** — one core process on SQLite/WAL (plus an optional admin dashboard), vs
+  BTCPay's full node + NBXplorer + Postgres or epusdt's MySQL + Redis.
+
+### The honest caveat (who should use something else)
+
+Optimus is **not** a fiat processor and does **not** do Bitcoin or Lightning.
+- Need **cards, bank settlement, chargebacks, or recurring billing**? Use **Stripe / PayPal / BitPay /
+  Coinbase Commerce**.
+- Want **Bitcoin + Lightning**, a full store/POS, and a large audited community? Use **BTCPay Server**
+  — it's more mature than this project.
+- Want **100–300+ coins** and ready-made e-commerce plugins with zero ops? **Cryptomus / NOWPayments**
+  are the pragmatic pick.
+- Need **KYC/AML tooling or a regulated counterparty**? A hosted processor gives you compliance-as-a-service a self-hosted gateway can't.
+
+And self-custody means the reliability is *your* ops discipline, not a vendor's SLA: run a solid VPS +
+RPC, keep the sweep key `0600` and your cold seed offline, fund the gas tank modestly, and **test with
+tiny amounts on each chain first.** Choose Optimus when self-custody, zero fees, no KYC, and no
+freeze-risk on stablecoins are worth more to you than hosted breadth and hand-holding. Longer
+head-to-head: [`COMPARISON.md`](COMPARISON.md).
 
 ---
 
@@ -487,8 +637,13 @@ instantly, no restart.
 | Symptom | Fix |
 |---|---|
 | Payments not detected | Make sure the service is running (`python run.py serve`) and your RPC allows log-reading — use `https://bnb.api.onfinality.io/public`, **not** `bsc-dataseed`. |
+| Remote `create-order` returns **403** | Keyless mode only allows localhost — set `OPG_MERCHANT_API_KEY` + `OPG_MERCHANT_API_SECRET` (recommended) and sign requests, or for a trusted network set `OPG_ALLOW_UNAUTHENTICATED=true`. |
+| Webhook never fires to a `localhost` URL | The SSRF guard blocks private/loopback URLs — use a public `https://` (ngrok) `notify_url`, or set `OPG_ALLOW_PRIVATE_WEBHOOKS=true` (dev only). |
+| Polygon payments missed | Public Polygon nodes rate-limit `eth_getLogs` — set a working Polygon RPC override (see [`docs/CHAINS.md`](docs/CHAINS.md)). |
+| LTC deposit credited **$0.00** | No LTC/USD price feed configured — set a rate (`OPG_LTC_USD_RATE` / `set_ltc_rate_provider`); see [`docs/LITECOIN.md`](docs/LITECOIN.md). |
+| Order stuck on **partial** | The buyer underpaid — they send the remainder (any number of transfers) and it flips to `paid`. |
 | "No receiving wallet configured" | Finish Step 3 (add an xpub or generate a wallet) in the Setup panel. |
-| Money credited but not swept | The gas tank is empty or auto-sweep is off — fund the tank (Step 5) and tick auto-sweep. |
+| Money credited but not swept | The gas tank is empty (fund the native coin **on that chain** — BNB can't pay ETH gas) or auto-sweep is off — see Step 5. |
 | Admin panel says "disabled" | Set `OPG_ADMIN_PASSWORD` before starting `python -m admin.app`. |
 | Preview address doesn't match my wallet | Your wallet may use a different account/path — use the offline tool with **Coin: ETH**, path `m/44'/60'/0'/0`. See [`docs/XPUB_GUIDE.md`](docs/XPUB_GUIDE.md). |
 

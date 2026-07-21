@@ -9,6 +9,12 @@ plus native **Litecoin (LTC)** — with a click-through setup, automatic payment
 automatic forwarding to your cold wallet, and wrong-network recovery. Point it at your
 wallet's **xpub** and it does the rest.
 
+**➕ Also verify Binance Pay** — accept a buyer's **Binance Pay** order id (or a deposit
+straight into your Binance account) and confirm it against your *real* Binance history with
+a **read-only** key. Reference + amount + status + **receiver** are all checked, and every
+payment — on-chain or Binance — burns through one **anti-replay lock** so it credits *exactly
+once.* See [`docs/BINANCE.md`](docs/BINANCE.md).
+
 [![Tests](https://github.com/faysaliteng/optimus-payment-gateway/actions/workflows/tests.yml/badge.svg)](https://github.com/faysaliteng/optimus-payment-gateway/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
@@ -40,6 +46,13 @@ and (if you want) **automatically moves the money to a safe "cold" wallet** you 
 **You never give anyone your secret keys.** The gateway only needs your **xpub** — a
 "read-only" key that can *create receiving addresses* but **cannot spend a cent.**
 
+**Prefer Binance Pay?** Some buyers would rather pay you on **Binance** than on-chain. The
+gateway handles that too: the buyer pays your Binance Pay ID and submits their order id, and
+the gateway checks it against your *own* Binance history (again, a **read-only** key) — that
+the payment really landed, for the right amount, **on your account** — before your app credits
+anyone. The same one-time-only lock that stops a blockchain payment counting twice stops a
+Binance reference being replayed. Full guide: [`docs/BINANCE.md`](docs/BINANCE.md).
+
 ## ✅ What it does automatically vs. 🖐️ what you do
 
 | The gateway does this **for you, automatically** | You do this **once** |
@@ -50,6 +63,7 @@ and (if you want) **automatically moves the money to a safe "cold" wallet** you 
 | 🟢 Sends your app a **signed "paid" webhook** | 🖐️ Put a little **gas** in the gas tank |
 | 🟢 **Auto-collects** every payment into your one cold wallet ("auto-sweep") | 🖐️ Flip **auto-sweep** on |
 | 🟢 **Recovers wrong-network** payments (paid on ETH by mistake, etc.) | |
+| 🟢 **Verifies Binance Pay** order ids / deposits against your real history (optional) | 🖐️ *(optional)* add a **read-only** Binance key + your **Pay ID** |
 
 ### 💰 Getting all payments into ONE wallet
 Because each order is paid to its **own** address (that's what keeps things private and

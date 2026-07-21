@@ -406,6 +406,55 @@ def _claim_reference(conn: sqlite3.Connection, reference: str, reference_type: s
         return False
 
 
+# ---------------------------------------------------------------------------
+#  Public reference-registry API — the anti-replay lock for OFF-CHAIN payments
+#  (e.g. a verified Binance Pay order id) that aren't tied to one of this
+#  gateway's own addressed on-chain orders. Burn the reference BEFORE crediting.
+# ---------------------------------------------------------------------------
+def claim_reference(reference: str, reference_type: str = "", order_id: int = 0) -> bool:
+    """Atomically burn a reference. Returns True if newly claimed, False if it was
+    already used (a replay — DO NOT credit). Opens its own IMMEDIATE transaction."""
+    conn = connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        ok = _claim_reference(conn, reference, reference_type, int(order_id or 0))
+        conn.commit()
+        return ok
+    finally:
+        conn.close()
+
+
+def reference_used(reference: str) -> bool:
+    """True if this reference has already been burned (crediting it again = replay)."""
+    norm = normalize_reference(reference)
+    if not norm:
+        return False
+    conn = connect()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM payment_reference_registry WHERE normalized_reference=?",
+            (norm,)).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
+def release_reference(reference: str) -> bool:
+    """Un-burn a reference — only for a verification you ROLLED BACK before crediting
+    (so the buyer can legitimately retry). Returns True if a row was removed."""
+    norm = normalize_reference(reference)
+    if not norm:
+        return False
+    conn = connect()
+    try:
+        cur = conn.execute(
+            "DELETE FROM payment_reference_registry WHERE normalized_reference=?", (norm,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
 def _apply_credit(conn: sqlite3.Connection, order: sqlite3.Row, cents: int, txid: str,
                   reference_type: str, ref_suffix: str = None) -> dict:
     """Core credit: burn txid, accumulate, flip to PAID when covered. Assumes an open

@@ -312,6 +312,46 @@ ChatGPT / Claude / Cursor:
 
 ---
 
+## 🅱️ Binance Pay & manual verification (the second rail)
+
+Not every buyer pays on-chain. Many pay you through **Binance Pay** (P2P/merchant) or
+send an **on-chain deposit straight into your Binance account**. This gateway can verify
+those too — against your *real* Binance history, using a **read-only** API key that can
+never withdraw. The buyer submits their **order id** (or txid), you confirm it, and only
+then credit them.
+
+A payment verifies **only if every check passes**: the reference exists in your history
+(matched across every id field Binance uses), the status is a success state, the amount
+matches (exact / 2-dp / small tolerance, non-stable assets spot-converted to USDT), and —
+crucially — **the payment landed on *your* Pay ID** (so a buyer can't submit a real order
+id that actually paid someone else). Optional min-age guard, and an automatic deep search
+(up to ~18 months) if the recent scan misses it.
+
+```python
+from optimus_gateway.binance import BinanceAccount, BinanceVerifier
+
+v = BinanceVerifier(BinanceAccount.from_config())      # or per-seller creds
+res = v.verify_and_claim("443746280424488960", expected_amount=4.00)
+if res["ok"]:
+    credit_user_wallet(res["amount"])                  # reference is now BURNED — can't replay
+elif res["reason"] == "already_used":
+    ...                                                # someone re-submitted it → do NOT credit
+```
+
+`verify_and_claim` ties verification to the **anti-replay reference registry** — the same
+lock every on-chain rail uses — so a reference credits **exactly once**. It works
+per-platform *or* one account per seller (isolated "Direct Payment" mode), handles the
+Binance Pay **merchant webhook** (HMAC-SHA512, fail-closed), and ships a CLI:
+
+```bash
+python examples/binance_manual_check.py 443746280424488960 --amount 4.00 --deep
+```
+
+Enable it with `OPG_BINANCE_ENABLED=true` + a read-only key + your `OPG_BINANCE_PAY_ID`.
+**Full guide, threat model & the golden order-of-operations: [`docs/BINANCE.md`](docs/BINANCE.md).**
+
+---
+
 ## ⛽ Understanding the gas tank (30-second read)
 
 - Sending crypto costs a **tiny network fee** paid in the chain's own coin: **BNB** on
@@ -402,6 +442,7 @@ instantly, no restart.
 | [`docs/ADDRESS_POOL.md`](docs/ADDRESS_POOL.md) | BEP20 address-reuse pool for gas-efficient small orders |
 | [`docs/API.md`](docs/API.md) | The REST API + webhook signatures (for devs / AI) |
 | [`docs/INTEGRATION.md`](docs/INTEGRATION.md) | Add crypto payments to your app in ~10 minutes |
+| [`docs/BINANCE.md`](docs/BINANCE.md) | **Binance Pay + manual verification** (the second rail), the anti-replay lock & per-seller mode |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | How it works under the hood |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | Key model, threat model, hardening checklist |
 | [`docs/CHAINS.md`](docs/CHAINS.md) | Networks, token contracts, adding a chain |

@@ -109,6 +109,13 @@ class Config:
     BINANCE_API_SECRET = os.getenv("OPG_BINANCE_API_SECRET", "").strip()
     BINANCE_BASE_URL = os.getenv("OPG_BINANCE_BASE_URL", "https://api.binance.com").rstrip("/")
     BINANCE_AMOUNT_TOLERANCE = _f("OPG_BINANCE_AMOUNT_TOLERANCE", 0.50)
+    # Your Binance Pay ID (receiver). When set, a Pay order id only verifies if the
+    # payment actually landed on THIS account — a buyer can't submit a real order id
+    # that paid someone else. Strongly recommended.
+    BINANCE_PAY_ID = os.getenv("OPG_BINANCE_PAY_ID", "").strip()
+    # Reject Binance Pay payments younger than this many minutes (anti-race / lets the
+    # transaction settle in history). 0 = accept as soon as it appears.
+    BINANCE_MIN_AGE_MINUTES = _i("OPG_BINANCE_MIN_AGE_MINUTES", 0)
 
     # ---- TON ----
     TON_RECEIVE_ADDRESS = os.getenv("OPG_TON_ADDRESS", "").strip()

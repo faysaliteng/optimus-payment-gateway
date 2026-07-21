@@ -308,21 +308,69 @@ open while that key is empty). Full details: [`docs/API.md`](docs/API.md) ·
 
 ### 🤖 Give this to your AI
 
-Setting up your own bot/shop and want an AI to wire this in? **Attach `docs/API.md`,
-`docs/INTEGRATION.md`, and the `examples/` folder to the chat**, then paste this to
-ChatGPT / Claude / Cursor:
+Setting up your own bot/shop and want an AI to wire this in **end-to-end, nothing missed**?
+**Attach `docs/API.md`, `docs/INTEGRATION.md`, `docs/BINANCE.md`, `docs/SECURITY.md`, and the
+`examples/` folder to the chat**, then paste this advanced prompt to ChatGPT / Claude / Cursor:
 
-> *"I'm using the **Optimus Payment Gateway** (a self-hosted, non-custodial crypto
-> payment gateway — files attached). It exposes `POST /api/v1/order/create` (body:
-> `method`, `amount`, `order_id`, `notify_url`); the JSON reply is wrapped as
-> `{status_code, data:{ pay_address, pay_amount, checkout_url, trade_id, … }}` (fields
-> under `data`). It's unauthenticated unless a merchant key is set — then requests need
-> `api_key` + an HMAC-SHA256 `signature`. When an order is paid it POSTs a signed webhook
-> to my `notify_url` (verify the `X-OPG-Signature` header via HMAC-SHA256 over the payload
-> with my shared secret — see `docs/API.md`). Add a 'Pay with crypto' flow to my
-> [describe your app]: create an order, show the buyer `data.checkout_url`, and mark the
-> order paid when the verified webhook arrives. Follow `docs/INTEGRATION.md` and the code
-> in `examples/`."*
+> **Context.** I'm integrating the **Optimus Payment Gateway** — a self-hosted, non-custodial
+> payment gateway (files attached). It runs as my own service; I keep 100% of funds and my keys
+> never leave me. It gives me **two rails** and I want **both** wired in: **(A) on-chain crypto**
+> via its HTTP merchant API, and **(B) Binance Pay** via its verification library. **Read the
+> attached docs first; do not invent endpoints, fields, or signatures.**
+>
+> **(A) On-chain crypto — HTTP merchant API** (base URL = where I host it):
+> - **Create a payment:** `POST /api/v1/order/create`, body `{ method, amount, order_id, notify_url }`.
+>   `method` is a network key returned by `GET /health` → `enabled_methods` (e.g. `usdt_bep20`,
+>   `usdt_erc20`, `usdt_polygon`, `usdt_ton`, `ltc`). **Send `amount` as a STRING** (`"25.00"`) —
+>   signing is over the exact string.
+> - **Auth:** if `OPG_MERCHANT_API_KEY` is set (required in production), every create call must add
+>   `api_key` + a `signature` = HMAC-SHA256 over the sorted `k=v&…` of the body (excluding
+>   `signature`/`sign`) with my secret. Worked example is in `docs/API.md` — copy it exactly.
+> - **Response is wrapped:** `{ status_code, data: { trade_id, order_id, method, pay_address,
+>   pay_amount, pay_amount_cents, status, expires_at, checkout_url, memo? } }`. Everything real is
+>   under `data`.
+> - **Show the buyer `data.checkout_url`** (hosted page: QR + address + live status), **or** render
+>   `data.pay_address` + `data.pay_amount` myself. **Always display `pay_amount`, never my original
+>   quote** — in shared-address mode it's nudged a cent so the amount identifies the order; the buyer
+>   must send that exact amount. For `usdt_ton`, also show `data.memo`.
+> - **Settlement:** when paid, the gateway POSTs a **signed webhook** to my `notify_url`. **Verify
+>   it:** recompute HMAC-SHA256 of the raw JSON body with my secret and compare **constant-time** to
+>   the `X-OPG-Signature` header; reject on mismatch. Payload = `{ event, trade_id, order_id, method,
+>   status, amount_cents, received_cents, pay_address, timestamp }`. `status == "paid"`
+>   (event `payment.completed`) is my settlement signal.
+> - **No webhooks?** Poll `GET /api/v1/order/{trade_id}` and act on `status == "paid"`.
+> - **Partial / overpayment:** `received_cents` accumulates across transfers; the order flips to
+>   `paid` only once it covers `pay_amount_cents`; an overpayment leaves `received_cents` higher —
+>   handle both gracefully.
+>
+> **(B) Binance Pay — verification library** (server-side, **not** the HTTP API; see `docs/BINANCE.md`).
+> Some buyers pay my Binance Pay ID and submit their **order id**; I verify it against my own Binance
+> history with a **read-only** key:
+> ```python
+> from optimus_gateway.binance import BinanceAccount, BinanceVerifier
+> res = BinanceVerifier(BinanceAccount.from_config()).verify_and_claim(order_id, expected_amount=amount)
+> if res["ok"]:
+>     credit_user(res["amount"])            # verified AND the reference is now burned
+> elif res["reason"] == "already_used":
+>     pass                                  # replay — do NOT credit
+> ```
+> `verify_and_claim` checks the reference exists, the amount, a success status, **and that it paid
+> *my* Pay ID**, then burns it so it can't be replayed. (Marketplace with per-seller payouts? Use one
+> `BinanceAccount(api_key=…, api_secret=…, pay_id=…)` per seller.)
+>
+> **Non-negotiable safety rules (apply to BOTH rails):**
+> 1. **Never credit or deliver before verification passes** — the webhook signature (A) or
+>    `verify_and_claim` returning `ok` (B).
+> 2. **Be idempotent.** A webhook can be re-delivered and a reference re-submitted. Treat
+>    `status == "paid"` as terminal and never credit the same `trade_id`/reference twice (the gateway
+>    already burns txids/references end-to-end; mirror that on my side).
+> 3. In production set `OPG_MERCHANT_API_KEY` (the API is open only for local dev) and use an
+>    **HTTPS** `notify_url`.
+>
+> **Task:** add a **"Pay with crypto"** (and, if I use Binance, **"Pay with Binance"**) flow to my
+> **[describe your app / bot / shop and stack]**: create the order, show the buyer the checkout, and
+> on verified payment mark it paid + fulfil. Follow `docs/INTEGRATION.md` and the code in `examples/`,
+> and call out anything I still need to configure.
 
 ---
 
